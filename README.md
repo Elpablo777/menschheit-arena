@@ -67,11 +67,19 @@ Jede Rolle kann ein eigenes Modell bekommen (`ARENA_PRO_MODEL`, `ARENA_CONTRA_MO
 | --- | --- | --- |
 | GET | `/api/health` | Status, DB, Provider |
 | GET | `/api/config` | öffentliche Konfiguration (ohne Key) |
+| GET | `/api/providers` | Anbieter-Katalog mit `:free`-Markierung |
+| POST | `/api/providers/test` | Verbindung testen, ohne etwas zu ändern |
+| POST | `/api/providers/select` | Provider dauerhaft in `.env` speichern |
 | GET | `/api/i18n/{de|en}` | UI-Texte |
-| POST | `/api/arena/debates` | Debatte starten (`sync: true` für synchronen Lauf) |
-| GET | `/api/arena/debates` | Liste |
+| POST | `/api/arena/debates` | Debatte starten (`sync: true` für synchron) |
+| GET | `/api/arena/debates` | Liste mit Rundenzahlen |
 | GET | `/api/arena/debates/{id}` | Detail inkl. Turns, Moderationen, Urteil |
+| GET | `/api/arena/debates/{id}/transcript` | vollständiger Verlauf je Runde |
+| GET | `/api/arena/debates/{id}/calls` | LLM-Aufrufe mit Prompt, Antwort, Tokens |
+| POST | `/api/arena/debates/{id}/fork` | neue Debatte aus dieser, mit neuem Thema |
+| DELETE | `/api/arena/debates/{id}` | Debatte und Protokoll löschen |
 | GET | `/api/arena/debates/{id}/report.md` | Markdown-Bericht |
+| GET | `/api/prompts/{role}/{lang}` | System-Prompt einer Rolle als Rohtext |
 | POST | `/api/sentinel/engagements` | Engagement anlegen (RoE, Scope, Ports) |
 | GET | `/api/sentinel/engagements` | Liste |
 | GET | `/api/sentinel/engagements/{id}` | Detail inkl. Aktionen, Findings, Audit |
@@ -80,8 +88,18 @@ Jede Rolle kann ein eigenes Modell bekommen (`ARENA_PRO_MODEL`, `ARENA_CONTRA_MO
 | POST | `/api/sentinel/actions/{id}/reject` | Ablehnung mit Grund |
 | POST | `/api/sentinel/engagements/{id}/kill` | Kill-Switch |
 | POST | `/api/sentinel/engagements/{id}/findings` | menschlich verifiziertes Finding |
+| DELETE | `/api/sentinel/engagements/{id}` | Engagement löschen |
 | GET | `/api/sentinel/engagements/{id}/report.md` | Markdown-Bericht |
 | POST | `/api/sentinel/validate` | Scope-Check ohne Nebenwirkung |
+| GET | `/api/audit` | Status der Audit-Kette |
+
+### Protokoll lesen
+
+Ein Klick auf eine Debatte öffnet den vollständigen Verlauf: Thema, jede Runde mit beiden Beiträgen, Steelman, öffentlichem Argument, Konfidenz, Zugeständnissen und Falsifikationsbedingung. Eine separate Moderationskarte zeigt Zusammenfassung, erkannte Muster und die Direktive für die nächste Runde. „Verwendete Prompts" springt zu den LLM-Aufrufen und zeigt den System-Prompt, die Benutzer-Nachricht und die Antwort im Klartext – inklusive Token-Zahlen und Dauer.
+
+„Als neue Debatte starten" öffnet einen Dialog, übernimmt Modelle und Einstellungen und startet mit einem anderen Thema. Die alte Debatte bleibt unverändert erhalten.
+
+Fehlerhafte Debatten (Status `failed`) bleiben sichtbar; der Fehlertext wird unter „Fehlerdetails" angezeigt, statt die Liste leer zu lassen.
 
 Schreibende Zugriffe sind über `APP_ACCESS_TOKEN` schützbar (Header `X-App-Token` oder `Authorization: Bearer`). Ohne Token nicht auf `0.0.0.0` binden.
 
@@ -100,21 +118,31 @@ Damit ist die Kette bewusst unvollständig: Planung, Freigabe, Nachweis, Bericht
 
 ## Konfiguration
 
-Alle Werte stehen in `.env.example`. Kern:
+Alle Werte stehen in `.env.example`. Der LLM-Layer spricht ausschließlich OpenAI-kompatible `/chat/completions`-Endpunkte. Über die Seite **Modelle** lässt sich der Anbieter auswählen, die Verbindung testen und als Standard in die `.env` schreiben (bestehende Datei wird vorher gesichert).
 
-```ini
-LLM_PROVIDER=mock
-LLM_BASE_URL=
-LLM_API_KEY=
-ARENA_PRO_MODEL=mock-pro
-ARENA_CONTRA_MODEL=mock-contra
-ARENA_JUDGE_MODEL=mock-judge
-ARENA_MODERATOR_MODEL=mock-moderator
-DATABASE_URL=sqlite:///./data/menschheit.db
-APP_ACCESS_TOKEN=
-PENTEST_EXECUTION_ENABLED=false
-ALLOW_PUBLIC_TARGETS=false
-```
+| Anbieter | Gruppe | Kostenlos | Hinweis |
+| --- | --- | --- | --- |
+| `openrouter` | Cloud | 8 `:free`-Modelle | voreingestellt, ein Key für viele Modelle |
+| `deepseek` | Cloud | nein | günstig, starke Reasoning-Modelle |
+| `openai` | Cloud | nein | zuverlässig |
+| `mistral` | Cloud | nein | EU-Endpunkt, AVV prüfen |
+| `groq` | Cloud | Freikontingent | sehr schnell |
+| `ollama` | Lokal | ja | kein Cloud-Transfer, kein Key |
+| `litellm` | Selbst gehostet | ja | eigener Proxy |
+| `custom` | Frei | – | beliebige OpenAI-kompatible URL |
+| `mock` | Lokal | ja | deterministisch, offline |
+
+Jede Rolle kann ein eigenes Modell bekommen (`ARENA_PRO_MODEL`, `ARENA_CONTRA_MODEL`, `ARENA_JUDGE_MODEL`, `ARENA_MODERATOR_MODEL`) oder pro Debatte im UI überschrieben werden.
+
+Kostenlose OpenRouter-Modelle tragen das Suffix `:free`. Die Auswahl ist voreingestellt, damit die App ohne Guthaben läuft; Rate-Limits sind dort strenger.
+
+## Debatten einstellen
+
+- **Runden:** frei von 1 bis 2000. Der Verlauf zeigt jede Runde einzeln, nicht nur das Endergebnis.
+- **Wortlimit pro Beitrag** (80–4000), **Temperatur** (0–2), **maximale Antwort-Tokens** (128–32000).
+- **Konfidenz-Gate:** ab welchem Wert „CONVINCED" akzeptiert wird (Standard 25).
+- **Früher Stop** an/aus: erlaubt dem Moderator, bei echtem Konsens vor dem Rundenziel zu beenden.
+- **Internes Reasoning anzeigen:** blendet den privaten Gedankengang im Protokoll ein oder aus.
 
 `DATABASE_URL` akzeptiert auch Postgres (`postgresql+psycopg://...`), dann `pip install -e ".[postgres]"`. Relative SQLite-Pfade werden relativ zur Projektwurzel aufgelöst.
 
@@ -147,7 +175,7 @@ src/menschheit/
   sentinel/     Scope-Guard, Regel-Planer, Service, Reports
   storage/      SQLite/Postgres, Repository, Audit-Kette
   web/          Vanilla-JS-SPA ohne Build-Schritt
-tests/          31 Tests
+tests/          48 Tests
 ```
 
 Keine externen Assets, kein CDN, kein Build. `web/` wird von Jinja ausgeliefert, `app.js` rendert die Ansichten mit `textContent` bzw. `escapeHtml` an allen dynamischen Stellen.

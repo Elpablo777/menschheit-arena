@@ -1,25 +1,37 @@
 # GitHub
 
-## Status
+## Repository
 
-Das Projekt ist lokal unter `menschheit-arena/` vollständig angelegt und als Git-Repo mit einem Commit auf `main` vorbereitet. Auf GitHub liegt es noch nicht, weil `gh` nicht angemeldet ist:
-
-```
-You are not logged into any GitHub hosts.
-```
-
-Letzter Schritt danach:
+**https://github.com/Elpablo777/menschheit-arena** – öffentlich, Default-Branch `main`, 3 Commits.
 
 ```bash
-gh auth login
-gh repo create menschheit-arena --public --source=. --push
+git clone https://github.com/Elpablo777/menschheit-arena.git
+cd menschheit-arena
+./start.sh            # oder . .\start.ps1
 ```
+
+CI läuft bei jedem Push: Tests auf Python 3.11–3.13, Ruff und `menschheit doctor`.
+
+## Nach dem Klonen
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+menschheit setup          # Provider, Modelle, Key
+menschheit doctor
+menschheit serve
+```
+
+Der Demo-Modus braucht weder Key noch Netzwerk.
+
+## „Alte Beschreibungen" bearbeiten
 
 ## Vor dem ersten Commit prüfen
 
 - `.env` ist nicht enthalten (`.gitignore` deckt `.env` und `.env.*` mit Ausnahme von `.env.example`).
 - `data/`, `reports/`, `__pycache__`, `.venv`, `.pytest_cache` sind ignoriert.
-- Keine echten API-Keys im Code. `menschheit doctor` zeigt maskierte Werte, keine Klartext-Keys.
+- Keine echten API-Keys im Code. Der Provider-Katalog enthält nur Modellnamen, keine Keys.
+- `.env.bak-*` Backups aus `/api/providers/select` tauchen wegen `.env.*` nicht im Repo auf.
 
 ## „Alte Beschreibungen" bearbeiten
 
