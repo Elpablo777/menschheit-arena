@@ -1429,6 +1429,18 @@
     return map[group] || group;
   }
 
+  function selectProvider(providerId) {
+    const provider = providerById(providerId);
+    if (!provider) return;
+    state.config = state.config || {};
+    if (state.config.provider !== provider.id) {
+      state.config.provider = provider.id;
+      state.config.provider_base_url = provider.base_url || "";
+      state.config.api_key_set = false;
+    }
+    renderProviders();
+  }
+
   function renderProviders() {
     const grid = $("#provider-grid");
     if (!grid) return;
@@ -1479,7 +1491,7 @@
   function renderProviderConfig() {
     const card = $("#provider-config-card");
     if (!card) return;
-    const provider = providerById(activeProviderId());
+    const provider = providerById(currentProviderId());
     if (!provider) {
       card.hidden = true;
       return;
@@ -1512,7 +1524,7 @@
   }
 
   async function testProvider(button) {
-    const provider = providerById(activeProviderId());
+    const provider = providerById(currentProviderId());
     if (!provider) return;
     const result = $("#provider-test-result");
     if (!result) return;
@@ -1547,7 +1559,7 @@
   }
 
   async function saveProvider(button) {
-    const provider = providerById(activeProviderId());
+    const provider = providerById(currentProviderId());
     if (!provider) return;
     setBusy(button, true);
     try {
@@ -1716,17 +1728,7 @@
       $$("[data-provider]").forEach((element) =>
         element.setAttribute("aria-pressed", String(element === card))
       );
-      $$(".provider-card").forEach((element) => element.setAttribute("aria-pressed", "false"));
-      card.setAttribute("aria-pressed", "true");
-      state.config = state.config || {};
-      const provider = providerById(card.dataset.provider);
-      if (!provider) return;
-      if (state.config.provider !== provider.id) {
-        state.config.provider = provider.id;
-        state.config.provider_base_url = provider.base_url || "";
-        state.config.api_key_set = false;
-      }
-      renderProviderConfig();
+      selectProvider(card.dataset.provider);
     });
     $("#provider-test")?.addEventListener("click", (event) => testProvider(event.currentTarget));
     $("#provider-save")?.addEventListener("click", (event) => saveProvider(event.currentTarget));

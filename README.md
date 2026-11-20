@@ -175,7 +175,7 @@ src/menschheit/
   sentinel/     Scope-Guard, Regel-Planer, Service, Reports
   storage/      SQLite/Postgres, Repository, Audit-Kette
   web/          Vanilla-JS-SPA ohne Build-Schritt
-tests/          48 Tests
+tests/          53 Tests
 ```
 
 Keine externen Assets, kein CDN, kein Build. `web/` wird von Jinja ausgeliefert, `app.js` rendert die Ansichten mit `textContent` bzw. `escapeHtml` an allen dynamischen Stellen.
