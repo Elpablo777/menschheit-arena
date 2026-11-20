@@ -127,8 +127,11 @@ class MockLLM:
         return LLMResult(
             text=text,
             model=model or f"mock-{purpose}",
-            input_tokens=max(1, sum(len(m.get("content", "")) for m in messages) // 4),
-            output_tokens=max(1, len(text) // 4),
+            prompt_tokens=max(1, sum(len(m.get("content", "")) for m in messages) // 4),
+            completion_tokens=max(1, len(text) // 4),
+            raw=text,
+            parsed=payload,
+            parsed_ok=True,
             meta={"mock": True, "purpose": purpose},
         )
 

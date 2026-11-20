@@ -11,12 +11,13 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from . import __version__
-from .config import PROJECT_ROOT, PROVIDER_PRESETS, Settings, get_settings, reload_settings
+from .config import PROJECT_ROOT, Settings, get_settings, reload_settings
 from .debate.engine import DebateEngine
 from .i18n import normalize_lang, t, validate_catalogs
 from .llm import build_client
 from .llm.base import LLMError
 from .llm.mock import MockLLM
+from .providers import PROVIDER_ORDER, PROVIDERS, catalogue
 from .storage import Database, Repository
 
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -69,12 +70,19 @@ def _ask_bool(prompt: str, default: bool = False) -> bool:
 
 
 def _choose_provider(default: str = "mock") -> str:
-    names = list(PROVIDER_PRESETS)
+    names = [name for name in PROVIDERS if name in PROVIDER_ORDER] + [
+        name for name in PROVIDERS if name not in PROVIDER_ORDER
+    ]
     print("\nProvider:")
     for index, name in enumerate(names, start=1):
-        preset = PROVIDER_PRESETS[name]
-        note = " (ohne API-Key, deterministisch)" if name == "mock" else ""
-        print(f"  {index:2d}. {name:14s} {preset['label']}{note}")
+        info = PROVIDERS[name]
+        label = info.get("label_de") or info["label"]
+        note = ""
+        if name == "mock":
+            note = "  (ohne API-Key, deterministisch)"
+        elif name == "openrouter":
+            note = f"  ({len(info['models'])} Modelle, davon {sum(1 for m in info['models'] if str(m['id']).endswith(':free'))} kostenlos)"
+        print(f"  {index:2d}. {name:12s} {label}{note}")
     raw = _ask("Auswahl (Name oder Nummer)", default)
     if raw.isdigit() and 1 <= int(raw) <= len(names):
         return names[int(raw) - 1]
@@ -169,10 +177,19 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     interactive = not args.yes
     provider = args.provider or (_choose_provider("mock") if interactive else "mock")
-    if provider not in PROVIDER_PRESETS:
+    if provider not in PROVIDERS:
         print(f"Unbekannter Provider: {provider}")
         return 2
-    preset = PROVIDER_PRESETS[provider]
+    preset = {
+        "base_url": "",
+        "pro": "",
+        "contra": "",
+        "judge": "",
+        "moderator": "",
+    }
+    info = PROVIDERS[provider]
+    preset["base_url"] = info.get("base_url", "")
+    preset.update(info.get("defaults", {}))
 
     base_url = args.base_url or (preset["base_url"] if not interactive else _ask("Base-URL", preset["base_url"]))
     api_key = args.api_key or ""
@@ -189,9 +206,10 @@ def cmd_setup(args: argparse.Namespace) -> int:
     )
     lang = args.lang or ("de" if not interactive else _ask("Standardsprache (de/en)", "de"))
     try:
-        rounds = int(args.rounds or ("4" if not interactive else _ask("Standard-Runden (1-8)", "4")))
+        rounds = int(args.rounds or ("4" if not interactive else _ask("Standard-Runden (1-2000)", "4")))
     except ValueError:
         rounds = 4
+    rounds = max(1, min(rounds, 2000))
     host = args.host or ("127.0.0.1" if not interactive else _ask("Host", "127.0.0.1"))
     try:
         port = int(args.port or ("8000" if not interactive else _ask("Port", "8000")))
@@ -216,8 +234,8 @@ def cmd_setup(args: argparse.Namespace) -> int:
         "ARENA_CONTRA_MODEL": contra,
         "ARENA_JUDGE_MODEL": judge,
         "ARENA_MODERATOR_MODEL": moderator,
-        "ARENA_DEFAULT_ROUNDS": str(max(1, min(rounds, 8))),
-        "ARENA_MAX_ROUNDS": "8",
+        "ARENA_DEFAULT_ROUNDS": str(max(1, min(rounds, 2000))),
+        "ARENA_MAX_ROUNDS": "2000",
         "ARENA_WORD_LIMIT": "350",
         "PENTEST_EXECUTION_ENABLED": "false",
         "ALLOW_PUBLIC_TARGETS": "false",
@@ -383,12 +401,24 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 
 
 def cmd_providers(_: argparse.Namespace) -> int:
-    print("Verfügbare Provider-Presets:\n")
-    for name, preset in PROVIDER_PRESETS.items():
-        print(f"{name}")
-        print(f"  {preset['label']}")
-        print(f"  Base-URL: {preset['base_url'] or '(keine)'}")
-        print(f"  Modelle:  {preset['pro']} / {preset['contra']} / {preset['judge']} / {preset['moderator']}")
+    print("Verfügbare Provider:\n")
+    for info in catalogue():
+        models = info.get("models") or []
+        free = sum(1 for model in models if str(model.get("id", "")).endswith(":free"))
+        print(f"{info['id']}  ({info.get('group', 'cloud')})")
+        print(f"  {info.get('label_de') or info['label']}")
+        print(f"  Base-URL: {info.get('base_url') or '(keine)'}")
+        if models:
+            shown = ", ".join(model["id"] for model in models[:4])
+            suffix = f" (+{len(models) - 4} weitere)" if len(models) > 4 else ""
+            print(f"  Modelle:  {shown}{suffix}")
+        if free:
+            print(f"  Kostenlos: {free} Modelle mit :free")
+        if info.get("needs_key"):
+            print("  API-Key:  erforderlich")
+        elif info["id"] in {"ollama", "mock"}:
+            print("  API-Key:  nicht erforderlich")
+        print()
     return 0
 
 
@@ -404,7 +434,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     setup = sub.add_parser("setup", help="Interaktiven Setup-Assistenten starten und .env schreiben.")
-    setup.add_argument("--provider", choices=list(PROVIDER_PRESETS))
+    setup.add_argument("--provider", choices=list(PROVIDERS))
     setup.add_argument("--base-url")
     setup.add_argument("--api-key")
     setup.add_argument("--pro-model")

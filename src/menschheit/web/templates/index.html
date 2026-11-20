@@ -34,6 +34,7 @@
   <nav class="tabs" role="tablist" data-i18n-aria-label="nav.label" aria-label="Hauptnavigation">
     <button id="tab-arena" class="tab" role="tab" aria-selected="true" aria-controls="panel-arena" data-panel="arena" tabindex="0" data-i18n="nav.arena">Arena</button>
     <button id="tab-sentinel" class="tab" role="tab" aria-selected="false" aria-controls="panel-sentinel" data-panel="sentinel" tabindex="-1" data-i18n="nav.sentinel">Sentinel Lab</button>
+    <button id="tab-providers" class="tab" role="tab" aria-selected="false" aria-controls="panel-providers" data-panel="providers" tabindex="-1" data-i18n="nav.providers">Modelle</button>
     <button id="tab-system" class="tab" role="tab" aria-selected="false" aria-controls="panel-system" data-panel="system" tabindex="-1" data-i18n="nav.system">System</button>
   </nav>
 
@@ -58,21 +59,13 @@
           <form id="debate-form" class="stack" novalidate>
             <div class="field">
               <label for="debate-topic" data-i18n="arena.form.topic">Debattenthema</label>
-              <textarea id="debate-topic" name="topic" rows="4" required minlength="8" maxlength="2000" data-i18n-placeholder="arena.form.topic_placeholder" placeholder="z. B. Sollte die Menschheit die Kontrolle über allgemeine KI an eine demokratische Institution abgeben?"></textarea>
+              <textarea id="debate-topic" name="topic" rows="3" required minlength="8" maxlength="4000" data-i18n-placeholder="arena.form.topic_placeholder" placeholder="z. B. Sollte die Menschheit die Kontrolle über allgemeine KI an eine demokratische Institution abgeben?"></textarea>
             </div>
             <div class="row">
               <div class="field">
-                <label for="debate-rounds" data-i18n="arena.form.rounds">Maximale Runden</label>
-                <select id="debate-rounds" name="rounds">
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="3">3</option>
-                  <option value="4" selected>4</option>
-                  <option value="5">5</option>
-                  <option value="6">6</option>
-                  <option value="7">7</option>
-                  <option value="8">8</option>
-                </select>
+                <label for="debate-rounds" data-i18n="arena.rounds_free">Runden (frei wählbar)</label>
+                <input id="debate-rounds" name="rounds" type="number" min="1" max="2000" value="4" inputmode="numeric">
+                <p class="hint" data-i18n="config.rounds_hint">Runden frei wählbar von 1 bis 2000. Der Verlauf zeigt jede Runde einzeln.</p>
               </div>
               <div class="field">
                 <label for="debate-lang" data-i18n="arena.form.lang">Sprache</label>
@@ -82,6 +75,7 @@
                 </select>
               </div>
             </div>
+
             <details class="advanced">
               <summary data-i18n="arena.form.models">Modelle überschreiben</summary>
               <div class="model-grid">
@@ -104,6 +98,42 @@
               </div>
               <p class="hint" data-i18n="arena.form.models_hint">Im Demo-Modus werden die Namen ignoriert. Im Live-Modus müssen sie zum konfigurierten Provider passen.</p>
             </details>
+
+            <details class="advanced">
+              <summary data-i18n="config.advanced">Erweiterte Einstellungen</summary>
+              <div class="field">
+                <label for="cfg-word-limit" data-i18n="config.word_limit">Wortlimit pro Beitrag</label>
+                <input id="cfg-word-limit" name="word_limit" type="number" min="80" max="4000" inputmode="numeric">
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label for="cfg-temperature" data-i18n="config.temperature">Temperatur</label>
+                  <input id="cfg-temperature" name="temperature" type="number" min="0" max="2" step="0.1" inputmode="decimal">
+                </div>
+                <div class="field">
+                  <label for="cfg-max-tokens" data-i18n="config.max_tokens">Maximale Antwort-Tokens</label>
+                  <input id="cfg-max-tokens" name="max_tokens" type="number" min="128" max="32000" step="128" inputmode="numeric">
+                </div>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label for="cfg-confidence" data-i18n="config.confidence_gate">Konfidenz-Gate</label>
+                  <input id="cfg-confidence" name="confidence_gate" type="number" min="0" max="100" inputmode="numeric">
+                  <p class="hint" data-i18n="config.confidence_gate_hint">Konfidenz, ab der eine Seite als überzeugt gilt. Standard 25.</p>
+                </div>
+              </div>
+              <label class="check">
+                <input type="checkbox" id="cfg-early-stop" name="early_stop">
+                <span data-i18n="config.early_stop">Früher Stop erlaubt</span>
+              </label>
+              <p class="hint" data-i18n="config.early_stop_hint">Wenn aktiviert, darf der Moderator bei einem echten Konsens vorzeitig beenden.</p>
+              <label class="check">
+                <input type="checkbox" id="cfg-show-reasoning" name="show_private_reasoning" checked>
+                <span data-i18n="config.show_reasoning">Internes Reasoning anzeigen</span>
+              </label>
+              <p class="hint" data-i18n="config.show_reasoning_hint">Privater Gedankengang im Protokoll sichtbar machen. Nur für die eigene Analyse.</p>
+            </details>
+
             <div class="form-actions">
               <button type="submit" class="btn primary" id="debate-submit" data-i18n="arena.form.start">Debatte starten</button>
               <button type="button" class="btn ghost small" id="demo-topic" data-i18n="arena.form.demo">Demo-Thema einsetzen</button>
@@ -119,6 +149,9 @@
           </header>
           <div id="debate-list" class="list" aria-live="polite">
             <p class="empty" data-i18n="arena.history.empty">Noch keine Debatte. Starte oben die erste.</p>
+          </div>
+          <div class="form-actions" id="debate-more-wrap" hidden>
+            <button type="button" class="btn ghost small" id="debate-more" data-i18n="arena.load_more">Weitere laden</button>
           </div>
         </article>
       </div>
@@ -231,6 +264,62 @@ app.lab.test</textarea>
       </article>
     </section>
 
+    <!-- ================= Modelle / Provider ================= -->
+    <section id="panel-providers" role="tabpanel" aria-labelledby="tab-providers" class="panel" hidden>
+      <div class="hero compact">
+        <p class="kicker" data-i18n="provider.title">Modell-Auswahl</p>
+        <h1 data-i18n="provider.title">Modell-Auswahl</h1>
+        <p class="lead" data-i18n="provider.lead">Waehle einen Anbieter. Kostenlose Modelle tragen den Hinweis :free. Eigene Endpunkte sind ueber "Eigener" moeglich.</p>
+      </div>
+
+      <article class="card">
+        <header class="card-head">
+          <h2 data-i18n="provider.label">Anbieter</h2>
+          <span id="provider-key-state" class="badge"></span>
+        </header>
+        <div id="provider-grid" class="provider-grid" aria-live="polite">
+          <p class="empty" data-i18n="common.loading">Lädt …</p>
+        </div>
+      </article>
+
+      <article class="card" id="provider-config-card" hidden>
+        <header class="card-head">
+          <h2 id="provider-config-title">—</h2>
+        </header>
+        <div class="stack">
+          <div class="field">
+            <label for="provider-base-url" data-i18n="provider.base_url">Base-URL</label>
+            <input id="provider-base-url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
+          </div>
+          <div class="field">
+            <label for="provider-api-key" data-i18n="provider.api_key">API-Key</label>
+            <input id="provider-api-key" type="password" autocomplete="off" spellcheck="false" data-i18n-placeholder="provider.key_hint" placeholder="Der Key wird nur lokal gespeichert und nie an die Oberflaeche zurueckgegeben.">
+          </div>
+          <div class="field">
+            <label for="provider-model" data-i18n="provider.models">Modelle</label>
+            <input id="provider-model" autocomplete="off" spellcheck="false" placeholder="modellname">
+            <p class="hint" data-i18n="provider.custom_hint">Eigener Endpunkt: Base-URL und Modellnamen selbst eintragen. OpenAI-kompatibel.</p>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn secondary" id="provider-test" data-i18n="provider.test">Verbindung testen</button>
+            <a class="btn ghost small" id="provider-docs" href="#" target="_blank" rel="noopener" hidden><span data-i18n="provider.docs">Dokumentation</span> <span aria-hidden="true">↗</span></a>
+            <a class="btn ghost small" id="provider-keys" href="#" target="_blank" rel="noopener" hidden><span data-i18n="provider.keys">Keys holen</span> <span aria-hidden="true">↗</span></a>
+          </div>
+          <div id="provider-test-result" class="result" aria-live="polite" hidden></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <header class="card-head">
+          <h2 data-i18n="provider.save">Als Standard speichern</h2>
+        </header>
+        <p class="hint" data-i18n="provider.save_hint">Speichert die Auswahl als Standard für neue Debatten. Bestehende .env wird gesichert.</p>
+        <div class="form-actions">
+          <button type="button" class="btn primary" id="provider-save" data-i18n="provider.save">Als Standard speichern</button>
+        </div>
+      </article>
+    </section>
+
     <!-- ================= System ================= -->
     <section id="panel-system" role="tabpanel" aria-labelledby="tab-system" class="panel" hidden>
       <div class="hero compact">
@@ -298,10 +387,11 @@ app.lab.test</textarea>
         <header class="card-head">
           <h2 data-i18n="system.links">Integrationspunkte</h2>
         </header>
-        <p class="hint" data-i18n="system.integrations_hint">Hermes, LiteLLM und eigene Worker sprechen dieselbe REST-API. Details stehen in <code>docs/HERMES.md</code>.</p>
+        <p class="hint" data-i18n="system.integrations_hint">Hermes, LiteLLM und eigene Worker sprechen dieselbe REST-API. Details stehen in docs/HERMES.md.</p>
         <div class="endpoint-grid">
           <code>POST /api/arena/debates</code>
-          <code>GET /api/arena/debates/{id}</code>
+          <code>GET /api/arena/debates/{id}/transcript</code>
+          <code>GET /api/arena/debates/{id}/calls</code>
           <code>POST /api/sentinel/engagements</code>
           <code>POST /api/sentinel/actions/{id}/approve</code>
           <code>POST /api/sentinel/validate</code>
@@ -322,6 +412,34 @@ app.lab.test</textarea>
   </footer>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="fork-dialog" class="modal">
+    <form id="fork-form" class="stack" method="dialog">
+      <h2 data-i18n="arena.fork_title">Neue Debatte aus dieser</h2>
+      <p class="hint" data-i18n="arena.fork_hint">Übernimmt Modelle und Einstellungen, startet aber ein neues Thema. Die alte Debatte bleibt unverändert.</p>
+      <div class="field">
+        <label for="fork-topic" data-i18n="arena.fork_topic">Neues Thema</label>
+        <textarea id="fork-topic" name="topic" rows="3" required minlength="8" maxlength="4000"></textarea>
+      </div>
+      <div class="field">
+        <label for="fork-rounds" data-i18n="arena.rounds_free">Runden (frei wählbar)</label>
+        <input id="fork-rounds" name="rounds" type="number" min="1" max="2000" inputmode="numeric">
+      </div>
+      <label class="check">
+        <input type="checkbox" id="fork-inherit-models" checked>
+        <span data-i18n="arena.inherit_models">Modelle übernehmen</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="fork-inherit-config" checked>
+        <span data-i18n="arena.inherit_config">Einstellungen übernehmen</span>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn primary" id="fork-submit" data-i18n="arena.fork_start">Neue Debatte starten</button>
+        <button type="button" class="btn ghost" id="fork-cancel" data-i18n="common.close">Schließen</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="/static/app.js" defer></script>
 </body>
 </html>

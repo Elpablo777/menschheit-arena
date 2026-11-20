@@ -64,13 +64,14 @@ class OpenAICompatClient:
             "max_tokens": self.default_max_tokens if max_tokens is None else max_tokens,
             "stream": False,
         }
+        started = time.perf_counter()
         last_error: Exception | None = None
-        for attempt in range(2):
+        for attempt in range(3):
             try:
-                with httpx.Client(timeout=self.timeout) as client:
+                with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
                     response = client.post(self.endpoint, headers=self._headers(), json=payload)
-                if response.status_code in {429, 500, 502, 503, 504} and attempt == 0:
-                    time.sleep(1.5)
+                if response.status_code in {408, 409, 425, 429, 500, 502, 503, 504} and attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
                     continue
                 if response.status_code >= 400:
                     body = response.text[:500].replace("\n", " ")
@@ -91,18 +92,21 @@ class OpenAICompatClient:
                 return LLMResult(
                     text=content.strip(),
                     model=str(data.get("model") or model),
-                    input_tokens=int(usage.get("prompt_tokens") or 0),
-                    output_tokens=int(usage.get("completion_tokens") or 0),
+                    prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                    completion_tokens=int(usage.get("completion_tokens") or 0),
+                    raw=response.text[:20000],
+                    duration_ms=int((time.perf_counter() - started) * 1000),
                     meta={"provider": self.provider, "purpose": purpose},
                 )
             except LLMError as exc:
                 last_error = exc
-                if "HTTP 4" in str(exc) or "HTTP 5" in str(exc):
+                text = str(exc)
+                if any(marker in text for marker in ("HTTP 400", "HTTP 401", "HTTP 403", "HTTP 404", "HTTP 422")):
                     break
             except (httpx.HTTPError, ValueError, KeyError) as exc:
                 last_error = exc
-                if attempt == 0:
+                if attempt < 2:
                     time.sleep(1.0)
         if isinstance(last_error, LLMError):
             raise last_error
-        raise LLMError(f"LLM-Aufruf fehlgeschlagen: {type(last_error).__name__}")
+        raise LLMError(f"LLM-Aufruf fehlgeschlagen: {type(last_error).__name__}: {str(last_error)[:200]}")

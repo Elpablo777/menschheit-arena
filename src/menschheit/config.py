@@ -9,6 +9,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .providers import catalogue, provider_info
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 
@@ -70,10 +72,10 @@ PROVIDER_PRESETS: dict[str, dict[str, str]] = {
     "openrouter": {
         "label": "OpenRouter (viele Modelle, ein Key)",
         "base_url": "https://openrouter.ai/api/v1",
-        "pro": "anthropic/claude-sonnet-4",
-        "contra": "deepseek/deepseek-r1",
-        "judge": "openai/gpt-4o",
-        "moderator": "google/gemini-2.5-flash",
+        "pro": "deepseek/deepseek-r1:free",
+        "contra": "meta-llama/llama-3.3-70b-instruct:free",
+        "judge": "deepseek/deepseek-chat-v3-0324:free",
+        "moderator": "meta-llama/llama-3.3-70b-instruct:free",
     },
     "deepseek": {
         "label": "DeepSeek (direkte API)",
@@ -150,7 +152,7 @@ class Settings:
     moderator_model: str = "mock-moderator"
 
     default_rounds: int = 4
-    max_rounds: int = 8
+    max_rounds: int = 2000
     word_limit: int = 350
 
     pentest_execution_enabled: bool = False
@@ -180,7 +182,7 @@ class Settings:
             judge_model=_str("ARENA_JUDGE_MODEL", preset["judge"]),
             moderator_model=_str("ARENA_MODERATOR_MODEL", preset["moderator"]),
             default_rounds=max(1, _int("ARENA_DEFAULT_ROUNDS", 4)),
-            max_rounds=max(1, _int("ARENA_MAX_ROUNDS", 8)),
+            max_rounds=max(1, _int("ARENA_MAX_ROUNDS", 2000)),
             word_limit=max(100, _int("ARENA_WORD_LIMIT", 350)),
             pentest_execution_enabled=_bool("PENTEST_EXECUTION_ENABLED", False),
             allow_public_targets=_bool("ALLOW_PUBLIC_TARGETS", False),
@@ -192,13 +194,15 @@ class Settings:
 
     def public_dict(self) -> dict[str, object]:
         """Nur unkritische Werte fuer die Oberflaeche."""
+        info = provider_info(self.provider)
         return {
             "app_name": self.app_name,
             "version": self.version,
             "env": self.env,
             "lang": self.lang,
             "provider": self.provider,
-            "provider_label": PROVIDER_PRESETS.get(self.provider, {}).get("label", self.provider),
+            "provider_label": info.get("label", self.provider),
+            "provider_base_url": self.llm_base_url,
             "models": {
                 "pro": self.pro_model,
                 "contra": self.contra_model,
@@ -207,9 +211,13 @@ class Settings:
             },
             "default_rounds": self.default_rounds,
             "max_rounds": self.max_rounds,
+            "word_limit": self.word_limit,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
             "mock": self.is_mock,
             "pentest_execution_enabled": self.pentest_execution_enabled,
             "allow_public_targets": self.allow_public_targets,
+            "providers": catalogue(),
             "api_docs": "/docs",
         }
 

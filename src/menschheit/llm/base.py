@@ -14,13 +14,27 @@ class LLMError(RuntimeError):
 class LLMResult:
     text: str
     model: str
-    input_tokens: int = 0
-    output_tokens: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    raw: str = ""
+    parsed: Any = None
+    parsed_ok: bool = False
+    error: str | None = None
+    duration_ms: int = 0
     meta: dict[str, Any] = field(default_factory=dict)
+
+    # Kompatible Namen
+    @property
+    def input_tokens(self) -> int:
+        return self.prompt_tokens
+
+    @property
+    def output_tokens(self) -> int:
+        return self.completion_tokens
 
     @property
     def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens
+        return self.prompt_tokens + self.completion_tokens
 
 
 class LLMClient(Protocol):

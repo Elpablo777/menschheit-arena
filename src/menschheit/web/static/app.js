@@ -11,10 +11,13 @@
     config: null,
     health: null,
     debates: [],
+    debateLimit: 20,
     engagements: [],
     selectedDebate: null,
     selectedEngagement: null,
     pollTimer: null,
+    showPrivate: localStorage.getItem("ma.showPrivate") !== "false",
+    transcriptOpen: new Set(),
   };
 
   const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -24,7 +27,9 @@
   }
 
   function t(key, fallback) {
-    return state.messages[key] || fallback || key;
+    const value = state.messages[key];
+    if (typeof value === "string" && value.trim()) return value;
+    return fallback || key;
   }
 
   function langLabel(language) {
@@ -32,7 +37,21 @@
   }
 
   function statusLabel(status) {
-    return state.messages[`status.${status}`] || status || "–";
+    const map = {
+      pending: "Ausstehend",
+      running: "Läuft",
+      completed: "Fertig",
+      failed: "Fehler",
+      killed: "Beendet",
+      active: "Aktiv",
+      proposed: "Vorgeschlagen",
+      approved: "Freigegeben",
+      rejected: "Abgelehnt",
+      blocked_by_scope: "Scope blockiert",
+      allowed: "Erlaubt",
+      denied: "Blockiert",
+    };
+    return state.messages[`status.${status}`] || map[status] || status || "–";
   }
 
   function statusChip(status) {
@@ -62,6 +81,17 @@
     }).format(date);
   }
 
+  function formatTime(value) {
+    if (!value) return "–";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return new Intl.DateTimeFormat(state.lang === "de" ? "de-DE" : "en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(date);
+  }
+
   function formatDay(value) {
     if (!value) return "–";
     const date = new Date(`${value}T00:00:00`);
@@ -69,6 +99,15 @@
     return new Intl.DateTimeFormat(state.lang === "de" ? "de-DE" : "en-GB", {
       dateStyle: "medium",
     }).format(date);
+  }
+
+  function formatDuration(seconds) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return "–";
+    const minutes = Math.floor(value / 60);
+    const rest = Math.round(value % 60);
+    if (minutes >= 60) return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+    return minutes > 0 ? `${minutes} min ${rest} s` : `${rest} s`;
   }
 
   function formatDetail(detail) {
@@ -120,25 +159,33 @@
 
   function applyI18n() {
     $$("[data-i18n]").forEach((element) => {
-      element.textContent = t(element.dataset.i18n, element.textContent);
+      const value = state.messages[element.dataset.i18n];
+      if (typeof value === "string" && value.trim()) element.textContent = value;
     });
     $$("[data-i18n-placeholder]").forEach((element) => {
-      element.placeholder = t(element.dataset.i18nPlaceholder, element.placeholder);
+      const value = state.messages[element.dataset.i18nPlaceholder];
+      if (typeof value === "string" && value.trim()) element.placeholder = value;
     });
     $$("[data-i18n-aria-label]").forEach((element) => {
-      element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel, element.getAttribute("aria-label") || ""));
+      const value = state.messages[element.dataset.i18nAriaLabel];
+      if (typeof value === "string" && value.trim()) element.setAttribute("aria-label", value);
     });
     document.title = t("app.name", "Menschheit Arena");
+    const lang = normalizeDocLang(state.lang);
+    document.documentElement.lang = lang;
+    document.documentElement.dataset.lang = lang;
+  }
+
+  function normalizeDocLang(value) {
+    return String(value || "de").toLowerCase().startsWith("en") ? "en" : "de";
   }
 
   async function setLanguage(language) {
     try {
-      const data = await api(`/api/i18n/${language}`);
+      const data = await api(`/api/i18n/${encodeURIComponent(language)}`);
       state.lang = data.lang || language;
       state.messages = data.messages || {};
       localStorage.setItem("ma.lang", state.lang);
-      document.documentElement.lang = state.lang;
-      document.documentElement.dataset.lang = state.lang;
       $$("[data-set-lang]").forEach((button) => {
         button.setAttribute("aria-pressed", String(button.dataset.setLang === state.lang));
       });
@@ -148,7 +195,10 @@
       renderEngagementList();
       if (state.selectedDebate) renderDebateDetail(state.selectedDebate);
       if (state.selectedEngagement) renderEngagementDetail(state.selectedEngagement);
-      if (state.config && state.health) renderSystem();
+      if (state.config) {
+        renderSystem();
+        renderProviders();
+      }
       return true;
     } catch (error) {
       toast(error.message, true);
@@ -169,13 +219,13 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       element.hidden = true;
-    }, isError ? 7000 : 4000);
+    }, isError ? 8000 : 4000);
   }
 
   function setBusy(button, busy, label) {
     if (!button) return;
     if (busy) {
-      button.dataset.original = button.textContent;
+      button.dataset.original = button.dataset.original || button.textContent;
       button.disabled = true;
       if (label) button.textContent = label;
     } else {
@@ -187,11 +237,22 @@
     }
   }
 
+  async function copyText(value) {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast(t("toast.copied", "In die Zwischenablage kopiert."));
+    } catch {
+      toast(t("common.copy_failed", "Kopieren nicht möglich"), true);
+    }
+  }
+
   /* ---------- Arena ---------- */
 
-  async function loadDebates() {
+  async function loadDebates(reset = true) {
     try {
-      state.debates = await api("/api/arena/debates");
+      if (reset) state.debateLimit = 20;
+      const data = await api(`/api/arena/debates?limit=${state.debateLimit}`);
+      state.debates = Array.isArray(data) ? data : [];
       renderDebateList();
     } catch (error) {
       toast(error.message, true);
@@ -201,34 +262,44 @@
   function renderDebateList() {
     const list = $("#debate-list");
     if (!list) return;
+    const more = $("#debate-more-wrap");
     if (!state.debates.length) {
       list.innerHTML = `<p class="empty">${escapeHtml(t("arena.history.empty", "Noch keine Debatte."))}</p>`;
+      if (more) more.hidden = true;
       return;
     }
     list.innerHTML = state.debates
-      .map(
-        (debate) => `
+      .map((debate) => {
+        const rounds = Number(debate.rounds_actual) || Number(debate.rounds_requested) || 0;
+        const requested = Number(debate.rounds_requested) || 0;
+        const roundsText =
+          rounds > 0
+            ? `${t("arena.rounds_progress", "Runden")}: ${rounds}${requested > rounds ? ` / ${requested}` : ""}`
+            : `${t("arena.rounds_progress", "Runden")}: ${requested}`;
+        return `
         <button type="button" class="list-item" data-debate-id="${escapeHtml(debate.id)}">
           <span class="item-main">
             <span class="item-title">${escapeHtml(debate.topic)}</span>
             <span class="item-meta">${escapeHtml(formatDate(debate.created_at))} · ${escapeHtml(
               langLabel(debate.language)
-            )}</span>
+            )} · ${escapeHtml(roundsText)}</span>
           </span>
           ${statusChip(debate.status)}
-        </button>`
-      )
+        </button>`;
+      })
       .join("");
+    if (more) more.hidden = state.debates.length < state.debateLimit;
   }
 
   async function openDebate(debateId, scroll = true) {
     clearTimeout(state.pollTimer);
+    state.selectedDebate = null;
     const detail = $("#debate-detail");
     if (!detail) return;
     detail.hidden = false;
     detail.innerHTML = `<p class="empty">${escapeHtml(t("arena.detail.loading", "Debatte wird geladen …"))}</p>`;
     try {
-      const debate = await api(`/api/arena/debates/${debateId}`);
+      const debate = await api(`/api/arena/debates/${encodeURIComponent(debateId)}`);
       state.selectedDebate = debate;
       renderDebateDetail(debate);
       if (scroll) detail.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -244,36 +315,52 @@
     state.pollTimer = setTimeout(async () => {
       if (!state.selectedDebate || state.selectedDebate.id !== debateId) return;
       try {
-        const debate = await api(`/api/arena/debates/${debateId}`);
+        const debate = await api(`/api/arena/debates/${encodeURIComponent(debateId)}`);
         state.selectedDebate = debate;
         renderDebateDetail(debate);
         if (["pending", "running"].includes(debate.status)) {
           scheduleDebatePoll(debateId);
         } else {
-          loadDebates();
+          loadDebates(false);
+          loadDebateCalls(debateId);
         }
       } catch {
-        /* Netzwerk-Hiccup: kein harter Abbruch der Ansicht. */
+        /* Netzwerk-Hiccup: Ansicht bleibt stehen. */
       }
-    }, 1400);
+    }, 1500);
+  }
+
+  function debateMeta(debate) {
+    const models = debate.models || {};
+    const rounds = Number(debate.rounds_actual) || 0;
+    const requested = Number(debate.rounds_requested) || 0;
+    return [
+      formatDate(debate.created_at),
+      langLabel(debate.language),
+      rounds > 0
+        ? `${t("arena.rounds_progress", "Runden")}: ${rounds}${requested > rounds ? ` / ${requested}` : ""}`
+        : `${t("arena.rounds_progress", "Runden")}: ${requested}`,
+      `Pro: ${models.pro || "–"} · Contra: ${models.contra || "–"} · Judge: ${models.judge || "–"} · Mod: ${
+        models.moderator || "–"
+      }`,
+    ].join(" · ");
   }
 
   function renderDebateDetail(debate) {
     const detail = $("#debate-detail");
     if (!detail) return;
-    const models = debate.models || {};
+    const judgment = debate.judgment;
     const turns = debate.turns || [];
     const moderations = debate.moderations || [];
-    const judgment = debate.judgment;
-    const roundCount = new Set(turns.map((turn) => turn.round_no)).size || debate.rounds_requested;
-    const meta = [
-      formatDate(debate.created_at),
-      langLabel(debate.language),
-      `${t("arena.detail.rounds_meta", "Runden")}: ${roundCount}`,
-      `Pro: ${models.pro || "–"} · Contra: ${models.contra || "–"} · Judge: ${models.judge || "–"} · Mod: ${
-        models.moderator || "–"
-      }`,
-    ].join(" · ");
+    const finished = debate.completed_at && debate.created_at
+      ? (new Date(debate.completed_at) - new Date(debate.created_at)) / 1000
+      : null;
+
+    const progress = ["pending", "running"].includes(debate.status)
+      ? `<div class="progress-line"><strong>${escapeHtml(
+          t("arena.progress_live", "Fortschritt")
+        )}:</strong> ${escapeHtml(debate.progress || debate.status)}</div>`
+      : "";
 
     const reportLink = judgment
       ? `<a class="btn secondary small" href="/api/arena/debates/${encodeURIComponent(
@@ -281,18 +368,28 @@
         )}/report.md">${escapeHtml(t("arena.report_download", "Bericht als Markdown"))}</a>`
       : "";
 
-    const progress = ["pending", "running"].includes(debate.status)
-      ? `<div class="progress-line">${escapeHtml(t("arena.detail.progress", "Fortschritt"))}: ${escapeHtml(
-          debate.progress || debate.status
-        )}</div>`
-      : "";
+    const errorBlock =
+      debate.status === "failed" && debate.error
+        ? `<details class="advanced"><summary>${escapeHtml(
+            t("arena.error_detail", "Fehlerdetails")
+          )}</summary><p class="prose small">${escapeHtml(debate.error)}</p></details>`
+        : "";
 
     detail.innerHTML = `
       <header class="detail-head">
         <div>
-          <p class="kicker">${escapeHtml(t("arena.detail.title", "Debattenprotokoll"))}</p>
+          <p class="kicker">${escapeHtml(t("arena.transcript", "Gesprächsverlauf"))}</p>
           <h2>${escapeHtml(debate.topic)}</h2>
-          <p class="meta-line">${escapeHtml(meta)}</p>
+          <p class="meta-line">${escapeHtml(debateMeta(debate))}</p>
+          ${
+            finished !== null
+              ? `<p class="item-meta">${escapeHtml(t("arena.finished_at", "Beendet am"))}: ${escapeHtml(
+                  formatDate(debate.completed_at)
+                )} · ${escapeHtml(t("arena.duration_total", "Gesamtdauer"))}: ${escapeHtml(
+                  formatDuration(finished)
+                )}</p>`
+              : ""
+          }
         </div>
         <div class="detail-tools">
           ${statusChip(debate.status)}
@@ -303,10 +400,361 @@
         </div>
       </header>
       ${progress}
+      ${errorBlock}
+      <div class="toolbar">
+        <button type="button" class="btn secondary small" data-fork="true">${escapeHtml(
+          t("arena.fork", "Als neue Debatte starten")
+        )}</button>
+        <button type="button" class="btn ghost small" data-transcript-toggle="true" aria-pressed="${state.showPrivate}">
+          ${escapeHtml(
+            state.showPrivate
+              ? t("arena.hide_private", "Privates Reasoning ausblenden")
+              : t("arena.show_private", "Privates Reasoning anzeigen")
+          )}
+        </button>
+        <button type="button" class="btn danger small" data-delete="true">${escapeHtml(
+          t("arena.delete", "Debatte löschen")
+        )}</button>
+      </div>
+      ${renderTranscript(debate, turns, moderations)}
       ${renderJudgment(judgment)}
-      <h3>${escapeHtml(t("arena.turns", "Züge"))}</h3>
-      ${renderRounds(turns, moderations)}
+      <h3>${escapeHtml(t("arena.calls_title", "LLM-Aufrufe"))}</h3>
+      <p class="hint">${escapeHtml(
+        t("arena.calls_hint", "Jeder Aufruf mit Prompt, Antwort und Token-Zahlen.")
+      )}</p>
+      <div id="call-list" class="call-list">
+        <p class="empty">${escapeHtml(t("common.loading", "Lädt …"))}</p>
+      </div>
     `;
+    loadDebateCalls(debate.id);
+  }
+
+  function renderTranscript(debate, turns, moderations) {
+    const roundNumbers = Array.from(new Set(turns.map((turn) => turn.round_no))).sort((a, b) => a - b);
+    if (!roundNumbers.length) {
+      return `<h3>${escapeHtml(t("arena.transcript", "Gesprächsverlauf"))}</h3>
+        <p class="empty">${escapeHtml(t("arena.no_argument", "Kein Beitrag in dieser Runde."))}</p>`;
+    }
+    const missing = [];
+    for (let index = 1; index <= Math.max(...roundNumbers); index += 1) {
+      if (!roundNumbers.includes(index)) missing.push(index);
+    }
+    const jump = roundNumbers.length > 4
+      ? `<div class="round-jump">${roundNumbers
+          .map((round) => `<button type="button" data-jump="${round}">#${round}</button>`)
+          .join("")}</div>`
+      : "";
+    const header = `<h3>${escapeHtml(t("arena.transcript", "Gesprächsverlauf"))}</h3>
+      <p class="item-meta">${roundNumbers.length} ${escapeHtml(
+        t("arena.rounds_progress", "Runden")
+      )}${
+        missing.length
+          ? ` · ${escapeHtml(t("arena.rounds_missing", "Runden ohne Beitrag"))}: ${missing
+              .slice(0, 20)
+              .join(", ")}`
+          : ""
+      }</p>${jump}`;
+    const rounds = roundNumbers
+      .map((round) => {
+        const pro = turns.find((turn) => turn.round_no === round && turn.role === "pro");
+        const contra = turns.find((turn) => turn.round_no === round && turn.role === "contra");
+        const moderation = moderations.find((mod) => mod.round_no === round);
+        const open = state.transcriptOpen.has(`${debate.id}:${round}`) || roundNumbers.length <= 2;
+        const summaryBits = [pro ? "Pro" : "", contra ? "Contra" : ""].filter(Boolean).join(" · ");
+        return `
+        <details class="transcript-round" id="round-${round}" ${open ? "open" : ""}>
+          <summary>
+            <span>${escapeHtml(t("arena.round_free", "Runde"))} ${round}</span>
+            ${summaryBits ? `<span class="tag">${escapeHtml(summaryBits)}</span>` : ""}
+            ${
+              pro || contra
+                ? `<span class="item-meta">${escapeHtml(
+                    t("arena.confidence", "Konfidenz")
+                  )}: ${pro ? pro.confidence : "–"} / ${contra ? contra.confidence : "–"}</span>`
+                : ""
+            }
+            ${moderation ? statusChip(moderation.decision) : ""}
+          </summary>
+          <div class="transcript-body">
+            ${renderTurn(pro, round, debate.id)}
+            ${renderTurn(contra, round, debate.id)}
+            ${moderation ? renderModeration(moderation) : ""}
+          </div>
+        </details>`;
+      })
+      .join("");
+    return `${header}<div class="transcript">${rounds}</div>`;
+  }
+
+  function renderTurn(turn, round, debateId) {
+    if (!turn) {
+      return `<div class="turn-card"><p class="empty">${escapeHtml(
+        t("arena.no_argument", "Kein Beitrag in dieser Runde.")
+      )}</p></div>`;
+    }
+    const isPro = turn.role === "pro";
+    const confidence = Math.max(0, Math.min(100, Number(turn.confidence) || 0));
+    const conceded = Array.isArray(turn.conceded_claims) ? turn.conceded_claims : [];
+    const reasoning = escapeHtml(turn.internal_reasoning || "–");
+    return `
+      <article class="turn-card" data-role="${isPro ? "pro" : "contra"}">
+        <header class="turn-head">
+          <span class="role-pill">${escapeHtml(
+            isPro ? t("arena.side_pro", "Pro") : t("arena.side_contra", "Contra")
+          )}</span>
+          <span class="tag">${escapeHtml(t("arena.round_free", "Runde"))} ${round}</span>
+          <span class="confidence">${escapeHtml(t("arena.confidence", "Konfidenz"))} <strong>${confidence}</strong></span>
+          <span class="tag">${escapeHtml(formatTime(turn.created_at))}</span>
+        </header>
+        <div class="confidence-bar"><span style="width:${confidence}%;${
+          confidence <= 25 ? "background:var(--danger)" : ""
+        }"></span></div>
+        <p class="label">${escapeHtml(t("arena.steelman", "Steelman des Gegners"))}</p>
+        <p class="prose">${escapeHtml(turn.steelman || "–")}</p>
+        <p class="label">${escapeHtml(t("arena.public_argument", "Öffentliches Argument"))}</p>
+        <p class="prose">${escapeHtml(turn.public_argument || "")}</p>
+        ${
+          state.showPrivate
+            ? `<details class="private">
+                <summary>${escapeHtml(t("arena.private_reasoning", "Internes Reasoning (nur für dich sichtbar)"))}</summary>
+                <p class="prose">${reasoning}</p>
+                <p class="label">${escapeHtml(t("arena.conceded", "Zugestandene Punkte"))}</p>
+                ${
+                  conceded.length
+                    ? `<ul>${conceded.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+                    : `<p class="prose">${escapeHtml(t("common.none", "Keine"))}</p>`
+                }
+                <p class="label">${escapeHtml(t("arena.falsification", "Falsifikationsbedingung"))}</p>
+                <p class="prose">${escapeHtml(turn.falsification || "–")}</p>
+              </details>`
+            : `<p class="hint">${escapeHtml(t("arena.private_hidden_hint", "Ausgeblendet."))}</p>`
+        }
+        <div class="turn-actions">
+          <button type="button" class="btn ghost small" data-call-filter="${isPro ? "pro" : "contra"}">
+            ${escapeHtml(t("arena.prompt_view", "Verwendete Prompts"))}
+          </button>
+          <button type="button" class="btn ghost small" data-copy-turn="${escapeHtml(turn.id)}">
+            ${escapeHtml(t("common.copy", "Kopieren"))}
+          </button>
+        </div>
+      </article>`;
+  }
+
+  function renderModeration(moderation) {
+    const flags = [];
+    if (moderation.sycophancy) flags.push(t("arena.sycophancy", "Sycophancy erkannt"));
+    if (moderation.drift) flags.push(t("arena.drift", "Problem-Drift erkannt"));
+    return `
+      <aside class="moderation-card">
+        <div class="moderation-head">
+          <span class="role-pill">${escapeHtml(t("arena.moderator_note", "Moderator"))}</span>
+          ${statusChip(moderation.decision)}
+          ${flags.length ? `<span class="tag bad">${escapeHtml(flags.join(" · "))}</span>` : ""}
+        </div>
+        <p>${escapeHtml(moderation.summary || "")}</p>
+        ${
+          moderation.directive
+            ? `<p><strong>${escapeHtml(
+                t("arena.next_directive", "Direktive für die nächste Runde")
+              )}:</strong> ${escapeHtml(moderation.directive)}</p>`
+            : ""
+        }
+      </aside>`;
+  }
+
+  async function loadDebateCalls(debateId, role = null) {
+    const list = $("#call-list");
+    if (!list) return;
+    try {
+      const query = role ? `?role=${encodeURIComponent(role)}&limit=500` : "?limit=500";
+      const data = await api(`/api/arena/debates/${encodeURIComponent(debateId)}/calls${query}`);
+      const calls = data.calls || [];
+      if (!calls.length) {
+        list.innerHTML = `<p class="empty">${escapeHtml(t("arena.no_calls", "Noch keine Aufrufe."))}</p>`;
+        return;
+      }
+      list.innerHTML = calls.map(renderCall).join("");
+      const summary = document.createElement("p");
+      summary.className = "item-meta";
+      summary.textContent = `${calls.length} ${escapeHtml(
+        t("arena.calls_title", "LLM-Aufrufe")
+      )} · ${data.total_tokens} ${escapeHtml(t("arena.call_tokens", "Tokens"))}`;
+      list.prepend(summary);
+    } catch (error) {
+      list.innerHTML = `<p class="empty">${escapeHtml(error.message)}</p>`;
+    }
+  }
+
+  function renderCall(call) {
+    const messages = Array.isArray(call.messages) ? call.messages : [];
+    const system = messages.filter((entry) => entry.role === "system").map((entry) => entry.content).join("\n\n");
+    const others = messages.filter((entry) => entry.role !== "system");
+    const ok = Boolean(call.parsed_ok);
+    const duration = Number(call.duration_ms) / 1000;
+    return `
+      <details class="call-card">
+        <summary>
+          <span class="tag">${escapeHtml(call.role || call.purpose || "–")}</span>
+          ${call.round_no ? `<span class="tag">${escapeHtml(t("arena.call_round", "Runde"))} ${call.round_no}</span>` : ""}
+          <span class="item-meta">${escapeHtml(call.model || "–")}</span>
+          <span class="tag">${call.total_tokens || 0} ${escapeHtml(t("arena.call_tokens", "Tokens"))}</span>
+          <span class="tag">${Number.isFinite(duration) ? `${duration.toFixed(1)} s` : "–"}</span>
+          <span class="tag ${ok ? "ok" : "bad"}">${escapeHtml(
+            ok ? t("arena.call_parsed", "geparst") : t("arena.call_failed", "fehlgeschlagen")
+          )}</span>
+        </summary>
+        <div class="call-body">
+          <div class="call-meta">
+            <span>${escapeHtml(t("arena.call_role", "Rolle"))}: ${escapeHtml(call.role || "–")}</span>
+            <span>${escapeHtml(t("arena.call_model", "Modell"))}: ${escapeHtml(call.model || "–")}</span>
+            <span>prompt ${call.prompt_tokens || 0} · completion ${call.completion_tokens || 0}</span>
+            ${call.error ? `<span class="tag bad">${escapeHtml(call.error)}</span>` : ""}
+          </div>
+          <div class="call-section">
+            <h4>${escapeHtml(t("arena.prompt_system", "System-Prompt der Rolle"))}</h4>
+            <pre>${escapeHtml(system || "–")}</pre>
+          </div>
+          <div class="call-section">
+            <h4>${escapeHtml(t("arena.prompt_user", "Benutzer-Nachricht (Rohtext)"))}</h4>
+            <pre>${escapeHtml(
+              others.map((entry) => `[${entry.role}]\n${entry.content}`).join("\n\n") || "–"
+            )}</pre>
+          </div>
+          <div class="call-section">
+            <h4>${escapeHtml(t("arena.prompt_response", "Antwort des Modells"))}</h4>
+            <pre>${escapeHtml(call.response_text || "–")}</pre>
+          </div>
+        </div>
+      </details>`;
+  }
+
+  async function submitDebate(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = $("#debate-submit");
+    const data = new FormData(form);
+    const topic = String(data.get("topic") || "").trim();
+    if (topic.length < 8) {
+      toast(`${t("arena.form.topic", "Debattenthema")}: min. 8`, true);
+      $("#debate-topic")?.focus();
+      return;
+    }
+    const rounds = Number(data.get("rounds") || 0);
+    if (!Number.isInteger(rounds) || rounds < 1 || rounds > 2000) {
+      toast(`${t("arena.rounds_free", "Runden")}: 1–2000`, true);
+      $("#debate-rounds")?.focus();
+      return;
+    }
+    const models = {};
+    [
+      ["pro", "model_pro"],
+      ["contra", "model_contra"],
+      ["judge", "model_judge"],
+      ["moderator", "model_moderator"],
+    ].forEach(([role, field]) => {
+      const value = String(data.get(field) || "").trim();
+      if (value) models[role] = value;
+    });
+    const config = {};
+    const wordLimit = Number(data.get("word_limit") || 0);
+    if (wordLimit >= 80) config.word_limit = wordLimit;
+    const temperature = Number(data.get("temperature"));
+    if (Number.isFinite(temperature) && temperature > 0) config.temperature = temperature;
+    const maxTokens = Number(data.get("max_tokens") || 0);
+    if (maxTokens >= 128) config.max_tokens = maxTokens;
+    const confidence = Number(data.get("confidence_gate"));
+    if (Number.isInteger(confidence) && confidence >= 0 && confidence <= 100) {
+      config.confidence_gate = confidence;
+    }
+    config.early_stop = Boolean(data.get("early_stop"));
+    config.show_private_reasoning = Boolean(data.get("show_private_reasoning"));
+    if (config.show_private_reasoning) {
+      state.showPrivate = true;
+      localStorage.setItem("ma.showPrivate", "true");
+    }
+
+    const payload = {
+      topic,
+      rounds,
+      language: String(data.get("language") || state.lang),
+      config,
+    };
+    if (Object.keys(models).length) payload.models = models;
+    setBusy(button, true, t("arena.form.starting", "Debatte läuft …"));
+    try {
+      const debate = await api("/api/arena/debates", { method: "POST", body: payload });
+      toast(t("toast.debate_started", "Debatte gestartet."));
+      form.reset();
+      $("#debate-lang").value = state.lang;
+      if (state.config) $("#debate-rounds").value = String(state.config.default_rounds || 4);
+      await loadDebates();
+      await openDebate(debate.id, true);
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function forkDebate(button) {
+    const debate = state.selectedDebate;
+    if (!debate) return;
+    const dialog = $("#fork-dialog");
+    if (!dialog || !dialog.open) {
+      if (dialog && typeof dialog.showModal === "function") dialog.showModal();
+      return;
+    }
+    const input = $("#fork-topic");
+    const topic = input ? input.value.trim() : "";
+    if (topic.length < 8) {
+      toast(`${t("arena.fork_topic", "Neues Thema")}: min. 8`, true);
+      input?.focus();
+      return;
+    }
+    const roundsField = $("#fork-rounds");
+    const inheritModels = Boolean($("#fork-inherit-models")?.checked);
+    const inheritConfig = Boolean($("#fork-inherit-config")?.checked);
+    const roundsValue = Number(roundsField ? roundsField.value : 0);
+    const rounds = Number.isInteger(roundsValue) && roundsValue >= 1 ? roundsValue : null;
+    setBusy(button, true, t("arena.fork_start", "Neue Debatte starten"));
+    try {
+      const body = { topic, inherit_models: inheritModels, inherit_config: inheritConfig };
+      if (rounds) body.rounds = rounds;
+      const created = await api(`/api/arena/debates/${encodeURIComponent(debate.id)}/fork`, {
+        method: "POST",
+        body,
+      });
+      if (dialog) dialog.close();
+      toast(t("toast.debate_forked", "Neue Debatte gestartet."));
+      await loadDebates();
+      await openDebate(created.id, true);
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  async function deleteDebate(button) {
+    const debate = state.selectedDebate;
+    if (!debate) return;
+    if (!window.confirm(t("arena.delete_confirm", "Debatte löschen?"))) return;
+    setBusy(button, true);
+    try {
+      await api(`/api/arena/debates/${encodeURIComponent(debate.id)}`, { method: "DELETE" });
+      toast(t("toast.debate_deleted", "Debatte gelöscht."));
+      state.selectedDebate = null;
+      const detail = $("#debate-detail");
+      if (detail) {
+        detail.hidden = true;
+        detail.innerHTML = "";
+      }
+      await loadDebates();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      setBusy(button, false);
+    }
   }
 
   function renderJudgment(judgment) {
@@ -316,15 +764,18 @@
       )}</p>`;
     }
     const average = (judgment.toulmin && judgment.toulmin.average) || {};
-    const winner = (judgment.toulmin && judgment.toulmin.winner) || (judgment.pass_ab && judgment.pass_ab.winner) || "draw";
+    const winner =
+      (judgment.toulmin && judgment.toulmin.winner) ||
+      (judgment.pass_ab && judgment.pass_ab.winner) ||
+      "draw";
     const bias = Number(judgment.bias_delta || 0);
     const summary =
       (judgment.pass_ab && judgment.pass_ab.summary) || (judgment.pass_ba && judgment.pass_ba.summary) || "";
     const winnerLabel =
       winner === "pro"
-        ? t("arena.turn.pro", "Pro Menschheit")
+        ? t("arena.side_pro", "Pro")
         : winner === "contra"
-        ? t("arena.turn.contra", "Contra / Skeptiker")
+        ? t("arena.side_contra", "Contra")
         : t("arena.draw", "Unentschieden");
     const biasText =
       bias >= 4
@@ -349,18 +800,14 @@
             conflicts.length
               ? `<details class="private"><summary>${escapeHtml(
                   t("report.conflicts", "Offene Grundsatzkonflikte")
-                )}</summary><ul>${conflicts
-                  .map((item) => `<li>${escapeHtml(item)}</li>`)
-                  .join("")}</ul></details>`
+                )}</summary><ul>${conflicts.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>`
               : ""
           }
           ${
             rules.length
               ? `<details class="private"><summary>${escapeHtml(
                   t("report.rules", "Konkrete Architektur- & Verfassungsregeln")
-                )}</summary><ul>${rules
-                  .map((item) => `<li>${escapeHtml(item)}</li>`)
-                  .join("")}</ul></details>`
+                )}</summary><ul>${rules.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></details>`
               : ""
           }
         </article>
@@ -410,133 +857,12 @@
       .join("");
   }
 
-  function renderRounds(turns, moderations) {
-    if (!turns.length) {
-      return `<p class="empty">${escapeHtml(t("arena.detail.no_turns", "Noch keine Beiträge."))}</p>`;
-    }
-    const rounds = [...new Set(turns.map((turn) => turn.round_no))].sort((a, b) => a - b);
-    return rounds
-      .map((round) => {
-        const pro = turns.find((turn) => turn.round_no === round && turn.role === "pro");
-        const contra = turns.find((turn) => turn.round_no === round && turn.role === "contra");
-        const moderation = moderations.find((item) => item.round_no === round);
-        return `
-          <section class="round">
-            <header class="round-head">
-              <h4>${escapeHtml(t("arena.round", "Runde"))} ${round}</h4>
-              ${moderation ? statusChip(moderation.decision) : ""}
-            </header>
-            <div class="turns">
-              ${pro ? renderTurn(pro) : ""}
-              ${contra ? renderTurn(contra) : ""}
-            </div>
-            ${moderation ? renderModeration(moderation) : ""}
-          </section>`;
-      })
-      .join("");
-  }
-
-  function renderTurn(turn) {
-    const isPro = turn.role === "pro";
-    const confidence = Math.max(0, Math.min(100, Number(turn.confidence) || 0));
-    const conceded = Array.isArray(turn.conceded_claims) ? turn.conceded_claims : [];
-    const meterColor = confidence <= 25 ? "background:var(--danger)" : "";
-    return `
-      <article class="turn" data-role="${isPro ? "pro" : "contra"}">
-        <header class="turn-head">
-          <span class="role-pill">${escapeHtml(
-            isPro ? t("arena.turn.pro", "Pro Menschheit") : t("arena.turn.contra", "Contra / Skeptiker")
-          )}</span>
-          <span class="confidence">${escapeHtml(t("arena.confidence", "Konfidenz"))} <strong>${confidence}</strong></span>
-        </header>
-        <div class="confidence-bar"><span style="width:${confidence}%;${meterColor}"></span></div>
-        <p class="label">${escapeHtml(t("arena.steelman", "Steelman des Gegners"))}</p>
-        <p class="prose">${escapeHtml(turn.steelman || "–")}</p>
-        <p class="label">${escapeHtml(t("arena.public_argument", "Öffentliches Argument"))}</p>
-        <p class="prose">${escapeHtml(turn.public_argument || "")}</p>
-        <details class="private">
-          <summary>${escapeHtml(
-            t("arena.internal_reasoning", "Internes Reasoning (archiviert, für Gegner unsichtbar)")
-          )}</summary>
-          <p class="prose">${escapeHtml(turn.internal_reasoning || "–")}</p>
-          <p class="label">${escapeHtml(t("arena.conceded", "Zugestandene Punkte"))}</p>
-          ${
-            conceded.length
-              ? `<ul>${conceded.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
-              : `<p class="prose">${escapeHtml(t("common.none", "Keine"))}</p>`
-          }
-          <p class="label">${escapeHtml(t("arena.falsification", "Falsifikationsbedingung"))}</p>
-          <p class="prose">${escapeHtml(turn.falsification || "–")}</p>
-        </details>
-      </article>`;
-  }
-
-  function renderModeration(moderation) {
-    const flags = [];
-    if (moderation.sycophancy) flags.push(t("arena.sycophancy", "Sycophancy erkannt"));
-    if (moderation.drift) flags.push(t("arena.drift", "Problem-Drift erkannt"));
-    return `
-      <aside class="moderation">
-        <span class="moderation-label">${escapeHtml(t("arena.moderator", "Moderator & Anti-Sycophancy-Gate"))}</span>
-        <p>${escapeHtml(moderation.summary || "")}</p>
-        <p class="item-meta">${escapeHtml(moderation.decision || "")}${
-          flags.length ? ` · ${flags.map(escapeHtml).join(" · ")}` : ""
-        }</p>
-        ${
-          moderation.directive
-            ? `<p><strong>${escapeHtml(
-                t("arena.directive", "Anweisung für die nächste Runde")
-              )}:</strong> ${escapeHtml(moderation.directive)}</p>`
-            : ""
-        }
-      </aside>`;
-  }
-
-  async function submitDebate(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = $("#debate-submit");
-    const data = new FormData(form);
-    const topic = String(data.get("topic") || "").trim();
-    if (topic.length < 8) {
-      toast(`${t("arena.form.topic", "Debattenthema")}: min. 8`, true);
-      $("#debate-topic")?.focus();
-      return;
-    }
-    const models = {};
-    [["pro", "model_pro"], ["contra", "model_contra"], ["judge", "model_judge"], ["moderator", "model_moderator"]].forEach(
-      ([role, field]) => {
-        const value = String(data.get(field) || "").trim();
-        if (value) models[role] = value;
-      }
-    );
-    const payload = {
-      topic,
-      rounds: Number(data.get("rounds") || 4),
-      language: String(data.get("language") || state.lang),
-    };
-    if (Object.keys(models).length) payload.models = models;
-    setBusy(button, true, t("arena.form.starting", "Debatte läuft …"));
-    try {
-      const debate = await api("/api/arena/debates", { method: "POST", body: payload });
-      toast(t("toast.debate_started", "Debatte gestartet."));
-      form.reset();
-      $("#debate-lang").value = state.lang;
-      if (state.config) $("#debate-rounds").value = String(state.config.default_rounds || 4);
-      await loadDebates();
-      await openDebate(debate.id, true);
-    } catch (error) {
-      toast(error.message, true);
-    } finally {
-      setBusy(button, false);
-    }
-  }
-
   /* ---------- Sentinel ---------- */
 
   async function loadEngagements() {
     try {
-      state.engagements = await api("/api/sentinel/engagements");
+      const data = await api("/api/sentinel/engagements?limit=100");
+      state.engagements = Array.isArray(data) ? data : [];
       renderEngagementList();
     } catch (error) {
       toast(error.message, true);
@@ -574,7 +900,7 @@
     detail.hidden = false;
     detail.innerHTML = `<p class="empty">${escapeHtml(t("common.loading", "Lädt …"))}</p>`;
     try {
-      const engagement = await api(`/api/sentinel/engagements/${engagementId}`);
+      const engagement = await api(`/api/sentinel/engagements/${encodeURIComponent(engagementId)}`);
       state.selectedEngagement = engagement;
       renderEngagementDetail(engagement);
       if (scroll) detail.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -661,6 +987,9 @@
         <button type="button" class="btn danger" data-action="kill" data-id="${escapeHtml(engagement.id)}" ${
           engagement.kill_switch ? "disabled" : ""
         }>${escapeHtml(t("sentinel.detail.kill", "Kill-Switch"))}</button>
+        <button type="button" class="btn ghost" data-action="delete-engagement" data-id="${escapeHtml(
+          engagement.id
+        )}">${escapeHtml(t("sentinel.delete", "Engagement löschen"))}</button>
       </div>
 
       <h3>${escapeHtml(t("sentinel.actions.title", "Aktionen"))}</h3>
@@ -735,7 +1064,7 @@
           <div class="field">
             <label for="f-actor">${escapeHtml(t("sentinel.finding.actor", "Geprüft von"))}</label>
             <input id="f-actor" name="actor" autocomplete="name" value="${escapeHtml(
-              (state.selectedEngagement && state.selectedEngagement.authorized_by) || "human"
+              engagement.authorized_by || "human"
             )}">
           </div>
           <label class="check">
@@ -961,6 +1290,26 @@
     }
   }
 
+  async function deleteEngagement(button) {
+    if (!window.confirm(t("sentinel.delete_confirm", "Engagement löschen?"))) return;
+    setBusy(button, true);
+    try {
+      await api(`/api/sentinel/engagements/${button.dataset.id}`, { method: "DELETE" });
+      toast(t("sentinel.deleted", "Engagement gelöscht."));
+      state.selectedEngagement = null;
+      const detail = $("#engagement-detail");
+      if (detail) {
+        detail.hidden = true;
+        detail.innerHTML = "";
+      }
+      await loadEngagements();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
   async function refreshEngagement(engagementId) {
     const engagement = await api(`/api/sentinel/engagements/${engagementId}`);
     state.selectedEngagement = engagement;
@@ -1044,6 +1393,185 @@
     }
   }
 
+  /* ---------- Modelle / Provider ---------- */
+
+  let providers = [];
+
+  async function loadProviders() {
+    try {
+      const data = await api("/api/providers");
+      providers = data.providers || [];
+      renderProviders();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }
+
+  function currentProviderId() {
+    return (state.config && state.config.provider) || "mock";
+  }
+
+  function providerById(id) {
+    return providers.find((item) => item.id === id) || null;
+  }
+
+  function providerLabel(provider) {
+    return state.lang === "en" ? provider.label_en || provider.label : provider.label_de || provider.label;
+  }
+
+  function groupLabel(group) {
+    const map = {
+      cloud: t("provider.group_cloud", "Cloud"),
+      local: t("provider.group_local", "Lokal"),
+      selfhosted: t("provider.group_selfhosted", "Selbst gehostet"),
+      custom: t("provider.group_custom", "Eigener Endpunkt"),
+    };
+    return map[group] || group;
+  }
+
+  function renderProviders() {
+    const grid = $("#provider-grid");
+    if (!grid) return;
+    if (!providers.length) {
+      grid.innerHTML = `<p class="empty">${escapeHtml(t("common.loading", "Lädt …"))}</p>`;
+      return;
+    }
+    const active = currentProviderId();
+    const groups = [];
+    const seen = new Set();
+    providers.forEach((provider) => {
+      const key = provider.group || "cloud";
+      if (seen.has(key)) return;
+      seen.add(key);
+      groups.push(key);
+    });
+
+    grid.innerHTML = groups
+      .map((group) => {
+        const items = providers
+          .filter((provider) => (provider.group || "cloud") === group)
+          .map((provider) => {
+            const selected = provider.id === active;
+            const tags = [];
+            if (selected) tags.push(`<span class="provider-tag current">${escapeHtml(t("provider.selected", "Ausgewaehlt"))}</span>`);
+            if (provider.id === "openrouter" || provider.models.some((model) => String(model.id).endsWith(":free")))
+              tags.push(`<span class="provider-tag free">${escapeHtml(t("provider.free", "kostenlos"))}</span>`);
+            const modelCount = provider.models.length;
+            if (modelCount)
+              tags.push(`<span class="provider-tag">${modelCount} ${escapeHtml(t("provider.models", "Modelle"))}</span>`);
+            return `
+              <button type="button" class="provider-card" data-provider="${escapeHtml(
+                provider.id
+              )}" aria-pressed="${selected}">
+                <span class="provider-name">${escapeHtml(providerLabel(provider))}</span>
+                <span class="provider-meta">${escapeHtml(provider.base_url || "–")}</span>
+                <span class="provider-tags">${tags.join("")}</span>
+              </button>`;
+          })
+          .join("");
+        return `<div class="provider-group"><p class="label">${escapeHtml(groupLabel(group))}</p>
+          <div class="provider-grid">${items}</div></div>`;
+      })
+      .join("");
+    renderProviderConfig();
+  }
+
+  function renderProviderConfig() {
+    const card = $("#provider-config-card");
+    if (!card) return;
+    const provider = providerById(activeProviderId());
+    if (!provider) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    $("#provider-config-title").textContent = providerLabel(provider);
+    $("#provider-base-url").value = (state.config && state.config.provider === provider.id && state.config.provider_base_url) || provider.base_url || "";
+    $("#provider-model").value = (state.config && state.config.models && state.config.models.pro) || provider.defaults.pro || "";
+    $("#provider-api-key").value = "";
+    $("#provider-api-key").placeholder = (state.config && state.config.api_key_set)
+      ? t("provider.key_set", "Key gesetzt")
+      : t("provider.key_missing", "kein Key gesetzt");
+    const badge = $("#provider-key-state");
+    if (badge) {
+      const hasKey = provider.needs_key && state.config && state.config.api_key_set;
+      badge.textContent = hasKey ? t("provider.key_set", "Key gesetzt") : t("provider.key_missing", "kein Key gesetzt");
+    }
+    const docs = $("#provider-docs");
+    const keys = $("#provider-keys");
+    if (docs) {
+      docs.hidden = !provider.docs;
+      if (provider.docs) docs.href = provider.docs;
+    }
+    if (keys) {
+      keys.hidden = !provider.key_url;
+      if (provider.key_url) keys.href = provider.key_url;
+    }
+    const result = $("#provider-test-result");
+    if (result) result.hidden = true;
+  }
+
+  async function testProvider(button) {
+    const provider = providerById(activeProviderId());
+    if (!provider) return;
+    const result = $("#provider-test-result");
+    if (!result) return;
+    result.hidden = false;
+    result.className = "result";
+    result.innerHTML = `<p class="empty">${escapeHtml(t("provider.testing", "Teste ..."))}</p>`;
+    setBusy(button, true, t("provider.testing", "Teste ..."));
+    try {
+      const body = {
+        provider: provider.id,
+        base_url: $("#provider-base-url").value.trim() || null,
+        api_key: $("#provider-api-key").value.trim() || null,
+        model: $("#provider-model").value.trim() || null,
+      };
+      const data = await api("/api/providers/test", { method: "POST", body });
+      result.className = `result ${data.ok ? "allowed" : "denied"}`;
+      result.innerHTML = `${statusChip(data.ok ? "allowed" : "denied")}
+        <p>${escapeHtml(data.message || "")}</p>
+        ${
+          data.sample
+            ? `<div class="call-section"><h4>${escapeHtml(t("provider.sample", "Antwort des Modells"))}</h4><pre>${escapeHtml(
+                data.sample
+              )}</pre></div>`
+            : ""
+        }`;
+    } catch (error) {
+      result.className = "result denied";
+      result.innerHTML = `${statusChip("denied")}<p>${escapeHtml(error.message)}</p>`;
+    } finally {
+      setBusy(button, false, t("provider.test", "Verbindung testen"));
+    }
+  }
+
+  async function saveProvider(button) {
+    const provider = providerById(activeProviderId());
+    if (!provider) return;
+    setBusy(button, true);
+    try {
+      const data = await api("/api/providers/select", {
+        method: "POST",
+        body: {
+          provider: provider.id,
+          base_url: $("#provider-base-url").value.trim() || provider.base_url || "",
+          api_key: $("#provider-api-key").value.trim() || "",
+          model: $("#provider-model").value.trim() || provider.defaults.pro || "",
+        },
+      });
+      toast(data.message || t("toast.provider_saved", "Standard gespeichert."));
+      $("#provider-api-key").value = "";
+      await loadConfig();
+      await loadProviders();
+      renderProviderConfig();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      setBusy(button, false, t("provider.save", "Als Standard speichern"));
+    }
+  }
+
   /* ---------- System ---------- */
 
   async function loadConfig() {
@@ -1060,9 +1588,12 @@
         if (field) field.placeholder = (config.models && config.models[role]) || "";
       });
       const rounds = $("#debate-rounds");
-      if (rounds) rounds.value = String(Math.min(Math.max(1, config.default_rounds || 4), 8));
+      if (rounds) rounds.value = String(Math.min(Math.max(1, config.default_rounds || 4), 2000));
+      renderModeBadges();
+      return config;
     } catch (error) {
       toast(error.message, true);
+      return null;
     }
   }
 
@@ -1092,7 +1623,8 @@
     if (!config) return;
     $("#sys-provider").textContent = config.provider || "–";
     $("#sys-provider-label").textContent = config.provider_label || "";
-    $("#sys-db").textContent = health && health.database ? t("system.db_ok", "Datenbank erreichbar") : t("system.db_fail", "Datenbank nicht erreichbar");
+    $("#sys-db").textContent =
+      health && health.database ? t("system.db_ok", "Datenbank erreichbar") : t("system.db_fail", "Datenbank nicht erreichbar");
     $("#sys-db").className = health && health.database ? "ok-text" : "danger-text";
     $("#sys-exec").textContent = config.pentest_execution_enabled ? t("common.yes", "Ja") : t("common.no", "Nein");
     $("#sys-exec").className = config.pentest_execution_enabled ? "danger-text" : "ok-text";
@@ -1108,7 +1640,8 @@
   /* ---------- Navigation & Events ---------- */
 
   function activateTab(name, options = {}) {
-    const target = ["arena", "sentinel", "system"].includes(name) ? name : "arena";
+    const valid = ["arena", "sentinel", "providers", "system"];
+    const target = valid.includes(name) ? name : "arena";
     $$(".tab").forEach((tab) => {
       const active = tab.dataset.panel === target;
       tab.setAttribute("aria-selected", String(active));
@@ -1118,10 +1651,9 @@
     $$(".panel").forEach((panel) => {
       panel.hidden = panel.id !== `panel-${target}`;
     });
-    if (options.updateHash !== false) {
-      history.replaceState(null, "", `#${target}`);
-    }
+    if (options.updateHash !== false) history.replaceState(null, "", `#${target}`);
     if (target === "sentinel") loadEngagements();
+    if (target === "providers") loadProviders();
     if (target === "system") loadSystem();
   }
 
@@ -1168,11 +1700,45 @@
         topic.focus();
       }
     });
-    $("#debates-refresh")?.addEventListener("click", loadDebates);
+    $("#debates-refresh")?.addEventListener("click", () => loadDebates());
+    $("#debate-more")?.addEventListener("click", () => {
+      state.debateLimit += 20;
+      loadDebates(false);
+    });
 
     $("#engagement-form")?.addEventListener("submit", submitEngagement);
     $("#engagements-refresh")?.addEventListener("click", loadEngagements);
     $("#validate-form")?.addEventListener("submit", submitValidation);
+
+    $("#provider-grid")?.addEventListener("click", (event) => {
+      const card = event.target.closest("[data-provider]");
+      if (!card) return;
+      $$("[data-provider]").forEach((element) =>
+        element.setAttribute("aria-pressed", String(element === card))
+      );
+      $$(".provider-card").forEach((element) => element.setAttribute("aria-pressed", "false"));
+      card.setAttribute("aria-pressed", "true");
+      state.config = state.config || {};
+      const provider = providerById(card.dataset.provider);
+      if (!provider) return;
+      if (state.config.provider !== provider.id) {
+        state.config.provider = provider.id;
+        state.config.provider_base_url = provider.base_url || "";
+        state.config.api_key_set = false;
+      }
+      renderProviderConfig();
+    });
+    $("#provider-test")?.addEventListener("click", (event) => testProvider(event.currentTarget));
+    $("#provider-save")?.addEventListener("click", (event) => saveProvider(event.currentTarget));
+
+    $("#fork-form")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      forkDebate($("#fork-submit"));
+    });
+    $("#fork-cancel")?.addEventListener("click", () => $("#fork-dialog")?.close());
+    $("#fork-dialog")?.addEventListener("click", (event) => {
+      if (event.target === event.currentTarget) event.currentTarget.close();
+    });
 
     $("#token-form")?.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -1192,10 +1758,61 @@
         openEngagement(engagementButton.dataset.engagementId);
         return;
       }
+      const jump = event.target.closest("[data-jump]");
+      if (jump) {
+        const target = document.getElementById(`round-${jump.dataset.jump}`);
+        if (target) {
+          target.open = true;
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        return;
+      }
+      const callFilter = event.target.closest("[data-call-filter]");
+      if (callFilter && state.selectedDebate) {
+        loadDebateCalls(state.selectedDebate.id, callFilter.dataset.callFilter);
+        document.getElementById("call-list")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      const copyTurn = event.target.closest("[data-copy-turn]");
+      if (copyTurn && state.selectedDebate) {
+        const turn = (state.selectedDebate.turns || []).find((item) => item.id === copyTurn.dataset.copyTurn);
+        if (turn) {
+          copyText(
+            [
+              `${t("arena.round_free", "Runde")} ${turn.round_no} – ${turn.role}`,
+              "",
+              t("arena.steelman", "Steelman"),
+              turn.steelman,
+              "",
+              t("arena.public_argument", "Öffentliches Argument"),
+              turn.public_argument,
+              "",
+              t("arena.confidence", "Konfidenz"),
+              String(turn.confidence),
+            ].join("\n")
+          );
+        }
+        return;
+      }
+      const toggle = event.target.closest("[data-transcript-toggle]");
+      if (toggle) {
+        state.showPrivate = !state.showPrivate;
+        localStorage.setItem("ma.showPrivate", String(state.showPrivate));
+        if (state.selectedDebate) renderDebateDetail(state.selectedDebate);
+        return;
+      }
+      if (event.target.closest("[data-fork]")) {
+        forkDebate(event.target.closest("[data-fork]"));
+        return;
+      }
+      if (event.target.closest("[data-delete]")) {
+        deleteDebate(event.target.closest("[data-delete]"));
+        return;
+      }
       const closeButton = event.target.closest("[data-close]");
       if (closeButton) {
+        clearTimeout(state.pollTimer);
         if (closeButton.dataset.close === "debate") {
-          clearTimeout(state.pollTimer);
           state.selectedDebate = null;
           const detail = $("#debate-detail");
           if (detail) {
@@ -1219,8 +1836,21 @@
         if (action === "approve") approveAction(actionButton);
         if (action === "reject") rejectAction(actionButton);
         if (action === "kill") killEngagement(actionButton);
+        if (action === "delete-engagement") deleteEngagement(actionButton);
       }
     });
+
+    document.addEventListener("toggle", (event) => {
+      const details = event.target;
+      if (!(details instanceof HTMLDetailsElement) || !details.classList.contains("transcript-round")) return;
+      const summary = details.querySelector("summary span");
+      const label = summary ? summary.textContent.trim() : "";
+      const match = label.match(/(\d+)/);
+      if (!match || !state.selectedDebate) return;
+      const key = `${state.selectedDebate.id}:${match[1]}`;
+      if (details.open) state.transcriptOpen.add(key);
+      else state.transcriptOpen.delete(key);
+    }, true);
   }
 
   async function init() {
@@ -1228,6 +1858,7 @@
     setDefaultDates();
     await setLanguage(state.lang);
     await loadConfig();
+    await loadProviders();
     await loadDebates();
     const token = localStorage.getItem("ma.token");
     if (token) {

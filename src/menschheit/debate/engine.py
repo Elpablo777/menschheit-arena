@@ -1,15 +1,16 @@
-"""Deterministische Debatten-Engine mit Checkpoints, Stop-Gate und Dual-Order-Richter."""
+"""Debatten-Engine: Runden, Moderation, Dual-Order-Richter, LLM-Protokoll."""
 
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
 from ..config import Settings
 from ..i18n import normalize_lang
 from ..llm import model_for
-from ..llm.base import LLMClient, LLMResult
+from ..llm.base import LLMClient, LLMError, LLMResult
 from ..storage import Repository, utcnow
 from . import prompts
 from .models import JudgeVerdict, ModeratorVerdict, ScoreBlock, TurnPayload
@@ -42,6 +43,8 @@ class DebateEngine:
         self.tokens = 0
         self._local_lock = threading.Lock()
         self._active: set[str] = set()
+        self._debate_id: str | None = None
+        self._round_no: int | None = None
 
     def _notify(self, message: str) -> None:
         if self.progress:
@@ -58,13 +61,32 @@ class DebateEngine:
         purpose: str,
         meta: dict[str, Any],
     ) -> LLMResult:
+        model = model_for(self.settings, role)
+        started = time.perf_counter()
         result = self.client.complete(
             messages,
-            model=model_for(self.settings, role),
+            model=model,
             purpose=purpose,
             meta=meta,
         )
+        duration_ms = int((time.perf_counter() - started) * 1000)
         self.tokens += result.total_tokens
+        self.repo.log_llm_call(
+            debate_id=self._debate_id,
+            engagement_id=None,
+            role=role,
+            purpose=purpose,
+            model=model,
+            messages=messages,
+            response_text=result.text,
+            parsed_ok=bool(result.parsed_ok),
+            error=result.error,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            total_tokens=result.total_tokens,
+            duration_ms=duration_ms,
+            round_no=self._round_no,
+        )
         return result
 
     def _with_repair(
@@ -79,7 +101,7 @@ class DebateEngine:
     ) -> Any:
         try:
             return parse(result.text)
-        except LLMOutputError:
+        except LLMOutputError as exc:
             repair = [
                 *messages,
                 {"role": "assistant", "content": result.text[:4000]},
@@ -91,7 +113,7 @@ class DebateEngine:
                     ),
                 },
             ]
-            repaired = self._call(repair, role=role, purpose=purpose, meta=meta)
+            repaired = self._call(repair, role=role, purpose=purpose, meta={**meta, "repair": str(exc)[:300]})
             return parse(repaired.text)
 
     def run(self, debate_id: str) -> dict[str, Any]:
@@ -104,6 +126,7 @@ class DebateEngine:
             if debate_id in self._active:
                 raise DebateBusy(f"Debatte {debate_id} laeuft bereits.")
             self._active.add(debate_id)
+            self._debate_id = debate_id
 
         self.tokens = 0
         lang = normalize_lang(debate["language"])
@@ -116,15 +139,19 @@ class DebateEngine:
             "moderator": self.settings.moderator_model,
         }
         knowledge = prompts.load_knowledge(lang)
+        config = debate.get("config") or {}
 
         self.repo.update_debate(debate_id, status="running", error=None, completed_at=None)
-        self._notify("Debatte gestartet")
+        self._notify(f"Debatte gestartet · {rounds} Runden")
         try:
             previous_public: dict[str, str] = {"pro": "", "contra": ""}
             directive = ""
             stop_reason: str | None = None
+            rounds_done = 0
 
             for round_no in range(1, rounds + 1):
+                self._round_no = round_no
+                rounds_done = round_no
                 current: dict[str, dict[str, Any]] = {}
                 for role in ("pro", "contra"):
                     self._notify(f"Runde {round_no}/{rounds}: {role}")
@@ -138,7 +165,7 @@ class DebateEngine:
                         opponent=opponent,
                         own_previous=previous_public[role] if round_no > 1 else "",
                         directive=directive if round_no > 1 else "",
-                        word_limit=self.settings.word_limit,
+                        word_limit=int(config.get("word_limit") or self.settings.word_limit),
                         knowledge=knowledge,
                     )
                     meta = {
@@ -176,6 +203,7 @@ class DebateEngine:
                         "public_argument": payload.public_argument,
                         "conceded_claims": payload.conceded_claims,
                         "falsification": payload.falsification_condition,
+                        "internal_reasoning": payload.internal_reasoning,
                     }
 
                 self._notify(f"Runde {round_no}/{rounds}: Moderator")
@@ -244,6 +272,7 @@ class DebateEngine:
             if not stop_reason:
                 stop_reason = "DEADLOCK"
 
+            self._round_no = None
             self._notify("Richter-Durchlauf A/B")
             turns = self.repo.list_turns(debate_id)
             transcript_ab = self._transcript(turns, "ab", lang)
@@ -292,7 +321,7 @@ class DebateEngine:
                 winner = "contra"
 
             report_md = build_debate_report(
-                debate={**debate, "stop_reason": stop_reason, "models": models},
+                debate={**debate, "stop_reason": stop_reason, "models": models, "rounds_done": rounds_done},
                 turns=turns,
                 moderations=self.repo.list_moderations(debate_id),
                 pass_ab=pass_ab.model_dump(),
@@ -322,8 +351,18 @@ class DebateEngine:
                 total_tokens=self.tokens,
                 completed_at=utcnow(),
             )
-            self._notify("Abgeschlossen")
+            self._notify(f"Abgeschlossen · {rounds_done} Runden")
             return self.repo.get_debate(debate_id) or {}
+        except LLMError as exc:
+            message = f"LLMError: {str(exc)[:500]}"
+            self.repo.update_debate(
+                debate_id,
+                status="failed",
+                error=message,
+                stop_reason="ERROR",
+                completed_at=utcnow(),
+            )
+            raise
         except Exception as exc:
             message = f"{type(exc).__name__}: {str(exc)[:500]}"
             self.repo.update_debate(
@@ -337,6 +376,9 @@ class DebateEngine:
         finally:
             with self._local_lock:
                 self._active.discard(debate_id)
+                if self._debate_id == debate_id:
+                    self._debate_id = None
+                    self._round_no = None
 
     @staticmethod
     def _average_scores(pass_ab: JudgeVerdict, pass_ba: JudgeVerdict) -> dict[str, dict[str, Any]]:

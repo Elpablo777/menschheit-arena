@@ -87,10 +87,11 @@ def test_debate_sync_end_to_end(client: TestClient) -> None:
 
 def test_debate_validation(client: TestClient) -> None:
     assert client.post("/api/arena/debates", json={"topic": "kurz"}).status_code == 422
+    # 2000 Runden sind erlaubt, 2001 nicht.
     assert (
         client.post(
             "/api/arena/debates",
-            json={"topic": "Ein ausreichend langes Thema", "rounds": 99},
+            json={"topic": "Ein ausreichend langes Thema", "rounds": 2001},
         ).status_code
         == 422
     )

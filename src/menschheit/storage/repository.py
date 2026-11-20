@@ -1,4 +1,4 @@
-"""Repository mit parametrisierten Queries und append-only Audit-Kette."""
+"""Repository: parametrisierte Queries, Llm-Protokoll, append-only Audit-Kette."""
 
 from __future__ import annotations
 
@@ -8,23 +8,20 @@ from typing import Any
 
 from sqlalchemy import text
 
-from .db import Database, jdumps, jloads, utcnow
+from .db import (
+    Database,
+    _normalise_action,
+    _normalise_call,
+    _normalise_finding,
+    jdumps,
+    jloads,
+    utcnow,
+)
 
 
 def new_id(prefix: str = "") -> str:
     value = uuid.uuid4().hex
     return f"{prefix}{value}" if prefix else value
-
-
-def _normalise_action(row: dict[str, Any]) -> dict[str, Any]:
-    row["scope_allowed"] = bool(row["scope_allowed"])
-    row["approval_required"] = bool(row["approval_required"])
-    return row
-
-
-def _normalise_finding(row: dict[str, Any]) -> dict[str, Any]:
-    row["verified_by_human"] = bool(row["verified_by_human"])
-    return row
 
 
 class Repository:
@@ -39,13 +36,19 @@ class Repository:
         language: str,
         rounds_requested: int,
         models: dict[str, str],
+        config: dict[str, Any] | None = None,
+        parent_debate_id: str | None = None,
     ) -> dict[str, Any]:
         debate_id = new_id("deb_")
         now = utcnow()
         self.db.execute(
             """
-            INSERT INTO debates (id, topic, language, status, models_json, rounds_requested, created_at)
-            VALUES (:id, :topic, :language, 'pending', :models, :rounds, :created)
+            INSERT INTO debates
+                (id, topic, language, status, models_json, rounds_requested,
+                 config_json, parent_debate_id, created_at)
+            VALUES
+                (:id, :topic, :language, 'pending', :models, :rounds,
+                 :config, :parent, :created)
             """,
             {
                 "id": debate_id,
@@ -53,13 +56,15 @@ class Repository:
                 "language": language,
                 "models": jdumps(models),
                 "rounds": rounds_requested,
+                "config": jdumps(config or {}),
+                "parent": parent_debate_id,
                 "created": now,
             },
         )
         return self.get_debate(debate_id) or {}
 
     def update_debate(self, debate_id: str, **fields: Any) -> None:
-        allowed = {"status", "stop_reason", "total_tokens", "cost_usd", "error", "completed_at"}
+        allowed = {"status", "stop_reason", "total_tokens", "cost_usd", "error", "completed_at", "config_json"}
         updates = {key: value for key, value in fields.items() if key in allowed}
         if not updates:
             return
@@ -72,10 +77,11 @@ class Repository:
         if not row:
             return None
         row["models"] = jloads(row.pop("models_json"), {})
+        row["config"] = jloads(row.pop("config_json"), {})
         row["turns"] = self.list_turns(debate_id)
         row["moderations"] = self.list_moderations(debate_id)
-        judgment = self.get_judgment(debate_id)
-        row["judgment"] = judgment
+        row["judgment"] = self.get_judgment(debate_id)
+        row["rounds_actual"] = len({turn["round_no"] for turn in row["turns"]})
         return row
 
     def fail_stale_debates(self) -> None:
@@ -86,13 +92,32 @@ class Repository:
             {"now": utcnow()},
         )
 
-    def list_debates(self, limit: int = 40) -> list[dict[str, Any]]:
+    def list_debates(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = self.db.fetch_all(
-            "SELECT id, topic, language, status, stop_reason, created_at, completed_at "
+            "SELECT id, topic, language, status, stop_reason, rounds_requested, "
+            "total_tokens, parent_debate_id, created_at, completed_at, error "
             "FROM debates ORDER BY created_at DESC LIMIT :limit",
-            {"limit": max(1, min(limit, 200))},
+            {"limit": max(1, min(limit, 500))},
         )
+        for row in rows:
+            row["rounds_actual"] = int(
+                self.db.fetch_one(
+                    "SELECT COUNT(DISTINCT round_no) AS n FROM turns WHERE debate_id = :id",
+                    {"id": row["id"]},
+                )["n"]
+                or 0
+            )
+            row["parent_debate_id"] = row.get("parent_debate_id") or None
         return rows
+
+    def delete_debate(self, debate_id: str) -> bool:
+        exists = self.db.fetch_one("SELECT id FROM debates WHERE id = :id", {"id": debate_id})
+        if not exists:
+            return False
+        for table in ("turns", "moderations", "judgments", "llm_calls"):
+            self.db.execute(f"DELETE FROM {table} WHERE debate_id = :id", {"id": debate_id})
+        self.db.execute("DELETE FROM debates WHERE id = :id", {"id": debate_id})
+        return True
 
     def add_turn(
         self,
@@ -243,6 +268,82 @@ class Repository:
         row["toulmin"] = jloads(row.pop("toulmin_json"), {})
         return row
 
+    # ---------- LLM-Protokoll ----------
+
+    def log_llm_call(
+        self,
+        *,
+        role: str,
+        purpose: str,
+        model: str,
+        messages: list[dict[str, str]],
+        response_text: str,
+        parsed_ok: bool,
+        error: str | None,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        duration_ms: int,
+        debate_id: str | None = None,
+        engagement_id: str | None = None,
+        round_no: int | None = None,
+    ) -> str:
+        call_id = new_id("call_")
+        self.db.execute(
+            """
+            INSERT INTO llm_calls
+                (id, debate_id, engagement_id, role, purpose, model, round_no,
+                 messages_json, response_text, parsed_ok, error,
+                 prompt_tokens, completion_tokens, total_tokens, duration_ms, created_at)
+            VALUES
+                (:id, :debate_id, :engagement_id, :role, :purpose, :model, :round_no,
+                 :messages, :response, :parsed_ok, :error,
+                 :prompt_tokens, :completion_tokens, :total_tokens, :duration, :created)
+            """,
+            {
+                "id": call_id,
+                "debate_id": debate_id,
+                "engagement_id": engagement_id,
+                "role": role,
+                "purpose": purpose,
+                "model": model,
+                "round_no": round_no,
+                "messages": jdumps(messages),
+                "response": response_text,
+                "parsed_ok": int(parsed_ok),
+                "error": error,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "duration": duration_ms,
+                "created": utcnow(),
+            },
+        )
+        return call_id
+
+    def list_llm_calls(
+        self, debate_id: str, role: str | None = None, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        if role:
+            rows = self.db.fetch_all(
+                "SELECT * FROM llm_calls WHERE debate_id = :id AND role = :role "
+                "ORDER BY created_at LIMIT :limit",
+                {"id": debate_id, "role": role, "limit": max(1, min(limit, 2000))},
+            )
+        else:
+            rows = self.db.fetch_all(
+                "SELECT * FROM llm_calls WHERE debate_id = :id ORDER BY created_at LIMIT :limit",
+                {"id": debate_id, "limit": max(1, min(limit, 2000))},
+            )
+        return [_normalise_call(row) for row in rows]
+
+    def get_llm_call(self, call_id: str) -> dict[str, Any] | None:
+        row = self.db.fetch_one("SELECT * FROM llm_calls WHERE id = :id", {"id": call_id})
+        return _normalise_call(row) if row else None
+
+    def clear_llm_calls(self, debate_id: str) -> None:
+        self.db.execute("DELETE FROM llm_calls WHERE debate_id = :id", {"id": debate_id})
+
     # ---------- Sentinel ----------
 
     def create_engagement(
@@ -292,21 +393,30 @@ class Repository:
         row["kill_switch"] = bool(row["kill_switch"])
         row["scope"] = jloads(row.pop("scope_json"), [])
         row["ports"] = jloads(row.pop("ports_json"), [])
-        row["actions"] = [_normalise_action(action) for action in self.list_actions(engagement_id)]
-        row["findings"] = [_normalise_finding(finding) for finding in self.list_findings(engagement_id)]
+        row["actions"] = self.list_actions(engagement_id)
+        row["findings"] = self.list_findings(engagement_id)
         row["audit"] = self.list_audit(engagement_id)
         row["audit_valid"] = self.verify_audit_chain(engagement_id)[0]
         return row
 
-    def list_engagements(self, limit: int = 40) -> list[dict[str, Any]]:
+    def list_engagements(self, limit: int = 100) -> list[dict[str, Any]]:
         rows = self.db.fetch_all(
             "SELECT id, client_name, status, valid_from, valid_until, kill_switch, created_at "
             "FROM engagements ORDER BY created_at DESC LIMIT :limit",
-            {"limit": max(1, min(limit, 200))},
+            {"limit": max(1, min(limit, 500))},
         )
         for row in rows:
             row["kill_switch"] = bool(row["kill_switch"])
         return rows
+
+    def delete_engagement(self, engagement_id: str) -> bool:
+        exists = self.db.fetch_one("SELECT id FROM engagements WHERE id = :id", {"id": engagement_id})
+        if not exists:
+            return False
+        for table in ("actions", "findings"):
+            self.db.execute(f"DELETE FROM {table} WHERE engagement_id = :id", {"id": engagement_id})
+        self.db.execute("DELETE FROM engagements WHERE id = :id", {"id": engagement_id})
+        return True
 
     def set_kill_switch(self, engagement_id: str, active: bool) -> None:
         self.db.execute(
@@ -401,7 +511,8 @@ class Repository:
                 (id, engagement_id, title, owasp_ref, cvss_vector, evidence, remediation,
                  verified_by_human, created_at)
             VALUES
-                (:id, :engagement, :title, :owasp, :cvss, :evidence, :remediation, :verified, :created)
+                (:id, :engagement, :title, :owasp, :cvss, :evidence, :remediation,
+                 :verified, :created)
             """,
             {
                 "id": finding_id,
@@ -415,13 +526,15 @@ class Repository:
                 "created": utcnow(),
             },
         )
-        return self.db.fetch_one("SELECT * FROM findings WHERE id = :id", {"id": finding_id}) or {}
+        row = self.db.fetch_one("SELECT * FROM findings WHERE id = :id", {"id": finding_id})
+        return _normalise_finding(dict(row)) if row else {}
 
     def list_findings(self, engagement_id: str) -> list[dict[str, Any]]:
-        return self.db.fetch_all(
+        rows = self.db.fetch_all(
             "SELECT * FROM findings WHERE engagement_id = :id ORDER BY created_at, id",
             {"id": engagement_id},
         )
+        return [_normalise_finding(row) for row in rows]
 
     # ---------- Audit ----------
 
@@ -462,17 +575,7 @@ class Repository:
                     "created": created,
                 },
             )
-        return {
-            "seq": seq,
-            "id": event_id,
-            "engagement_id": engagement_id,
-            "actor": actor,
-            "event_type": event_type,
-            "payload": payload,
-            "prev_hash": prev_hash,
-            "hash": digest,
-            "created_at": created,
-        }
+        return {"seq": seq, "id": event_id, "hash": digest}
 
     def list_audit(self, engagement_id: str) -> list[dict[str, Any]]:
         rows = self.db.fetch_all(
@@ -480,7 +583,7 @@ class Repository:
             {"id": engagement_id},
         )
         for row in rows:
-            row["payload"] = jloads(row.pop("payload_json"), {})
+            row["payload"] = jloads(row.get("payload_json"), {})
         return rows
 
     def verify_audit_chain(self, engagement_id: str | None = None) -> tuple[bool, list[str]]:
