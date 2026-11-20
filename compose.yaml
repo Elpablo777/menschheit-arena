@@ -1,0 +1,27 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      DATABASE_URL: sqlite:////app/data/menschheit.db
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      ARENA_PRO_MODEL: ${ARENA_PRO_MODEL:-mock-pro}
+      ARENA_CONTRA_MODEL: ${ARENA_CONTRA_MODEL:-mock-contra}
+      ARENA_JUDGE_MODEL: ${ARENA_JUDGE_MODEL:-mock-judge}
+      ARENA_MODERATOR_MODEL: ${ARENA_MODERATOR_MODEL:-mock-moderator}
+      APP_ACCESS_TOKEN: ${APP_ACCESS_TOKEN:-}
+      PENTEST_EXECUTION_ENABLED: "false"
+      ALLOW_PUBLIC_TARGETS: "false"
+    volumes:
+      - arena-data:/app/data
+      - arena-reports:/app/reports
+    restart: unless-stopped
+
+volumes:
+  arena-data:
+  arena-reports:

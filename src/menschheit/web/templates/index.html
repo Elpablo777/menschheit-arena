@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="de" data-lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Menschheit Arena</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main" data-i18n="skip.to_content">Zum Inhalt springen</a>
+
+  <div class="ai-banner">
+    <span class="ai-banner-mark" aria-hidden="true">AI</span>
+    <p data-i18n="banner.ai_act">KI-Transparenz nach Art. 50 EU AI Act: Du liest und erzeugst Inhalte mit KI-Systemen. Automatisierte Ausgaben können falsch sein. Prüfe jede Entscheidung, bevor du sie verwendest.</p>
+  </div>
+
+  <header class="site-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">MA</span>
+      <div class="brand-text">
+        <span class="brand-name" data-i18n="app.name">Menschheit Arena</span>
+        <span class="brand-tagline" data-i18n="app.tagline">Debatten zwischen Maschinen. Sicherheit für Menschen.</span>
+      </div>
+    </div>
+    <div class="header-tools">
+      <div class="lang-switch" role="group" data-i18n-aria-label="lang.switch" aria-label="Sprache wechseln">
+        <button type="button" data-set-lang="de" aria-pressed="true">DE</button>
+        <button type="button" data-set-lang="en" aria-pressed="false">EN</button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" data-i18n-aria-label="nav.label" aria-label="Hauptnavigation">
+    <button id="tab-arena" class="tab" role="tab" aria-selected="true" aria-controls="panel-arena" data-panel="arena" tabindex="0" data-i18n="nav.arena">Arena</button>
+    <button id="tab-sentinel" class="tab" role="tab" aria-selected="false" aria-controls="panel-sentinel" data-panel="sentinel" tabindex="-1" data-i18n="nav.sentinel">Sentinel Lab</button>
+    <button id="tab-system" class="tab" role="tab" aria-selected="false" aria-controls="panel-system" data-panel="system" tabindex="-1" data-i18n="nav.system">System</button>
+  </nav>
+
+  <main id="main">
+    <!-- ================= Arena ================= -->
+    <section id="panel-arena" role="tabpanel" aria-labelledby="tab-arena" class="panel">
+      <div class="hero">
+        <p class="kicker" data-i18n="hero.kicker">Multi-Agenten-Debatten &amp; KI-Sicherheitslabor</p>
+        <h1 data-i18n="hero.title">Erst streiten. Dann prüfen. Dann bauen.</h1>
+        <p class="lead" data-i18n="hero.lead">Zwei Modelle vertreten Pro und Contra. Ein Moderator verhindert Scheinkonsens. Ein unabhängiger Richter bewertet zweimal in vertauschter Reihenfolge. Am Ende steht ein prüfbarer Markdown-Bericht – kein Wohlfühl-Chat.</p>
+        <p class="badges">
+          <span class="badge" id="mode-badge-demo" data-i18n="hero.demo_badge" hidden>Demo-Modus: kein API-Key nötig</span>
+          <span class="badge" id="mode-badge-live" data-i18n="hero.live_badge" hidden>Live-Modus mit externen Modellen</span>
+        </p>
+      </div>
+
+      <div class="grid two">
+        <article class="card">
+          <header class="card-head">
+            <h2 data-i18n="arena.form.title">Neue Debatte</h2>
+          </header>
+          <form id="debate-form" class="stack" novalidate>
+            <div class="field">
+              <label for="debate-topic" data-i18n="arena.form.topic">Debattenthema</label>
+              <textarea id="debate-topic" name="topic" rows="4" required minlength="8" maxlength="2000" data-i18n-placeholder="arena.form.topic_placeholder" placeholder="z. B. Sollte die Menschheit die Kontrolle über allgemeine KI an eine demokratische Institution abgeben?"></textarea>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="debate-rounds" data-i18n="arena.form.rounds">Maximale Runden</label>
+                <select id="debate-rounds" name="rounds">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4" selected>4</option>
+                  <option value="5">5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
+                  <option value="8">8</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="debate-lang" data-i18n="arena.form.lang">Sprache</label>
+                <select id="debate-lang" name="language">
+                  <option value="de" data-i18n="lang.de">Deutsch</option>
+                  <option value="en" data-i18n="lang.en">Englisch</option>
+                </select>
+              </div>
+            </div>
+            <details class="advanced">
+              <summary data-i18n="arena.form.models">Modelle überschreiben</summary>
+              <div class="model-grid">
+                <div class="field">
+                  <label for="model-pro" data-i18n="arena.form.model_pro">Pro-Modell</label>
+                  <input id="model-pro" name="model_pro" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="field">
+                  <label for="model-contra" data-i18n="arena.form.model_contra">Contra-Modell</label>
+                  <input id="model-contra" name="model_contra" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="field">
+                  <label for="model-judge" data-i18n="arena.form.model_judge">Richter-Modell</label>
+                  <input id="model-judge" name="model_judge" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="field">
+                  <label for="model-moderator" data-i18n="arena.form.model_moderator">Moderator-Modell</label>
+                  <input id="model-moderator" name="model_moderator" autocomplete="off" spellcheck="false">
+                </div>
+              </div>
+              <p class="hint" data-i18n="arena.form.models_hint">Im Demo-Modus werden die Namen ignoriert. Im Live-Modus müssen sie zum konfigurierten Provider passen.</p>
+            </details>
+            <div class="form-actions">
+              <button type="submit" class="btn primary" id="debate-submit" data-i18n="arena.form.start">Debatte starten</button>
+              <button type="button" class="btn ghost small" id="demo-topic" data-i18n="arena.form.demo">Demo-Thema einsetzen</button>
+            </div>
+            <p class="hint" data-i18n="arena.form.note">Die Agenten sehen nur anonymisierte öffentliche Beiträge. Privates Reasoning bleibt archiviert und für den Gegner unsichtbar.</p>
+          </form>
+        </article>
+
+        <article class="card">
+          <header class="card-head">
+            <h2 data-i18n="arena.history.title">Bisherige Debatten</h2>
+            <button type="button" class="btn ghost small" id="debates-refresh" data-i18n="common.refresh">Aktualisieren</button>
+          </header>
+          <div id="debate-list" class="list" aria-live="polite">
+            <p class="empty" data-i18n="arena.history.empty">Noch keine Debatte. Starte oben die erste.</p>
+          </div>
+        </article>
+      </div>
+
+      <section id="debate-detail" class="detail-panel" aria-live="polite" hidden></section>
+    </section>
+
+    <!-- ================= Sentinel ================= -->
+    <section id="panel-sentinel" role="tabpanel" aria-labelledby="tab-sentinel" class="panel" hidden>
+      <div class="hero compact">
+        <p class="kicker">Control Plane</p>
+        <h1 data-i18n="sentinel.title">Sentinel Lab</h1>
+        <p class="lead" data-i18n="sentinel.lead">Die Control Plane für autorisierte Sicherheitsprüfungen: RoE erfassen, Scope hart prüfen, Aktionen vorschlagen, menschlich freigeben, auditieren. Aktive Angriffe sind absichtlich nicht implementiert.</p>
+      </div>
+
+      <div class="callout warning">
+        <span class="callout-mark" aria-hidden="true">!</span>
+        <p data-i18n="sentinel.warning">Sicherheitsgrenze: Dieses Modul führt keine Scans, Exploits oder Schreibzugriffe aus. Es erzwingt Scope und Freigaben, bevor ein separater, isolierter Worker überhaupt starten dürfte.</p>
+      </div>
+
+      <div class="grid two">
+        <article class="card">
+          <header class="card-head">
+            <h2 data-i18n="sentinel.form.title">Neues Engagement</h2>
+          </header>
+          <form id="engagement-form" class="stack" novalidate>
+            <div class="field">
+              <label for="eng-client" data-i18n="sentinel.form.client">Auftraggeber</label>
+              <input id="eng-client" name="client_name" required minlength="2" maxlength="200" autocomplete="organization">
+            </div>
+            <div class="field">
+              <label for="eng-scope" data-i18n="sentinel.form.scope">In-Scope-Ziele (eine Zeile pro Eintrag)</label>
+              <textarea id="eng-scope" name="scope" rows="4" required data-i18n-placeholder="sentinel.form.scope_placeholder" placeholder="127.0.0.1&#10;10.0.0.0/24&#10;app.lab.test&#10;https://app.lab.test"></textarea>
+              <p class="hint" data-i18n="sentinel.form.scope_hint">Erlaubt sind IPs, CIDR, Domains, Wildcards und http(s)-URLs. Öffentliche Ziele sind standardmäßig gesperrt.</p>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="eng-ports" data-i18n="sentinel.form.ports">Erlaubte Ports</label>
+                <input id="eng-ports" name="ports" value="80, 443" required data-i18n-placeholder="sentinel.form.ports_placeholder" placeholder="80, 443, 8080">
+              </div>
+              <div class="field">
+                <label for="eng-from" data-i18n="sentinel.form.valid_from">Gültig ab</label>
+                <input id="eng-from" name="valid_from" type="date" required>
+              </div>
+              <div class="field">
+                <label for="eng-until" data-i18n="sentinel.form.valid_to">Gültig bis</label>
+                <input id="eng-until" name="valid_until" type="date" required>
+              </div>
+            </div>
+            <div class="field">
+              <label for="eng-roe" data-i18n="sentinel.form.roe">Rules of Engagement (RoE)</label>
+              <textarea id="eng-roe" name="roe_text" rows="5" required minlength="50" maxlength="20000" data-i18n-placeholder="sentinel.form.roe_placeholder" placeholder="Signierte Freigabe, Testfenster, Out-of-Scope, Notfallkontakte …"></textarea>
+              <p class="hint" data-i18n="sentinel.form.roe_hint">Die RoE wird nur als Hash und lokal gespeichert. Sie wird nicht an das LLM gesendet.</p>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="eng-authorized" data-i18n="sentinel.form.authorized_by">Freigegeben durch</label>
+                <input id="eng-authorized" name="authorized_by" required minlength="2" maxlength="200">
+              </div>
+              <div class="field">
+                <label for="eng-emergency" data-i18n="sentinel.form.emergency">Notfallkontakt</label>
+                <input id="eng-emergency" name="emergency_contact" required minlength="2" maxlength="500">
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn primary" id="engagement-submit" data-i18n="sentinel.form.create">Engagement anlegen</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="card">
+          <header class="card-head">
+            <h2 data-i18n="sentinel.list.title">Engagements</h2>
+            <button type="button" class="btn ghost small" id="engagements-refresh" data-i18n="common.refresh">Aktualisieren</button>
+          </header>
+          <div id="engagement-list" class="list" aria-live="polite">
+            <p class="empty" data-i18n="sentinel.list.empty">Noch kein Engagement. Lege oben das erste an.</p>
+          </div>
+        </article>
+      </div>
+
+      <section id="engagement-detail" class="detail-panel" aria-live="polite" hidden></section>
+
+      <article class="card">
+        <header class="card-head">
+          <h2 data-i18n="sentinel.validate.title">Scope-Schnellprüfung</h2>
+        </header>
+        <p class="hint" data-i18n="sentinel.validate.lead">Prüfe ein Ziel gegen eine Allowlist, ohne ein Engagement anzulegen.</p>
+        <form id="validate-form" class="stack" novalidate>
+          <div class="row">
+            <div class="field grow">
+              <label for="val-target" data-i18n="sentinel.validate.target">Ziel</label>
+              <input id="val-target" name="target" required placeholder="https://app.lab.test" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field narrow">
+              <label for="val-ports" data-i18n="sentinel.validate.ports">Ports</label>
+              <input id="val-ports" name="ports" value="80, 443">
+            </div>
+          </div>
+          <div class="field">
+            <label for="val-scope" data-i18n="sentinel.validate.scope">Scope (eine Zeile pro Eintrag)</label>
+            <textarea id="val-scope" name="scope" rows="3" required>127.0.0.1
+app.lab.test</textarea>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn secondary" data-i18n="sentinel.validate.button">Prüfen</button>
+          </div>
+        </form>
+        <div id="validate-result" class="result" aria-live="polite" hidden></div>
+      </article>
+    </section>
+
+    <!-- ================= System ================= -->
+    <section id="panel-system" role="tabpanel" aria-labelledby="tab-system" class="panel" hidden>
+      <div class="hero compact">
+        <p class="kicker">Betrieb</p>
+        <h1 data-i18n="system.title">System</h1>
+        <p class="lead" data-i18n="system.lead">Betriebsstatus, Grenzen und Integrationspunkte.</p>
+      </div>
+
+      <div class="grid stats">
+        <article class="stat">
+          <span class="stat-label" data-i18n="system.provider">LLM-Provider</span>
+          <strong id="sys-provider">–</strong>
+          <span class="stat-sub" id="sys-provider-label"></span>
+        </article>
+        <article class="stat">
+          <span class="stat-label" data-i18n="system.database">Datenbank</span>
+          <strong id="sys-db">–</strong>
+          <span class="stat-sub" id="sys-db-sub"></span>
+        </article>
+        <article class="stat">
+          <span class="stat-label" data-i18n="system.execution">Aktive Ausführung</span>
+          <strong id="sys-exec">–</strong>
+          <span class="stat-sub" data-i18n="sentinel.no_execution">Ausführung deaktiviert: Die Control Plane protokolliert nur Vorschläge und Freigaben.</span>
+        </article>
+        <article class="stat">
+          <span class="stat-label" data-i18n="system.public_targets">Öffentliche Ziele erlaubt</span>
+          <strong id="sys-public">–</strong>
+          <span class="stat-sub" data-i18n="system.version">Version</span>
+          <span class="stat-sub" id="sys-version">–</span>
+        </article>
+      </div>
+
+      <div class="grid two">
+        <article class="card">
+          <header class="card-head">
+            <h2 data-i18n="system.api">REST-API</h2>
+          </header>
+          <p class="hint" data-i18n="system.provider_hint">Provider und API-Key werden über .env oder den Setup-Assistenten konfiguriert.</p>
+          <ul class="link-list">
+            <li><a href="/docs" target="_blank" rel="noopener"><span data-i18n="system.docs">OpenAPI-Dokumentation</span> <span aria-hidden="true">↗</span></a></li>
+            <li><a href="/api/health" target="_blank" rel="noopener"><span data-i18n="system.health">Health-Check</span> <span aria-hidden="true">↗</span></a></li>
+            <li><a href="/openapi.json" target="_blank" rel="noopener"><span>OpenAPI JSON</span> <span aria-hidden="true">↗</span></a></li>
+          </ul>
+          <p class="hint" id="sys-mode-note"></p>
+        </article>
+
+        <article class="card">
+          <header class="card-head">
+            <h2 data-i18n="system.token">App-Token (nur falls APP_ACCESS_TOKEN gesetzt ist)</h2>
+          </header>
+          <form id="token-form" class="stack" novalidate>
+            <div class="field">
+              <label for="token-input" data-i18n="system.token">App-Token (nur falls APP_ACCESS_TOKEN gesetzt ist)</label>
+              <input id="token-input" name="token" type="password" autocomplete="off" data-i18n-placeholder="system.token_placeholder" placeholder="Token aus .env">
+              <p class="hint" data-i18n="system.token_hint">Der Token wird nur im localStorage dieses Browsers gespeichert und bei schreibenden API-Aufrufen als X-App-Token gesendet.</p>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn secondary" data-i18n="system.token_save">Token lokal speichern</button>
+            </div>
+          </form>
+        </article>
+      </div>
+
+      <article class="card">
+        <header class="card-head">
+          <h2 data-i18n="system.links">Integrationspunkte</h2>
+        </header>
+        <p class="hint" data-i18n="system.integrations_hint">Hermes, LiteLLM und eigene Worker sprechen dieselbe REST-API. Details stehen in <code>docs/HERMES.md</code>.</p>
+        <div class="endpoint-grid">
+          <code>POST /api/arena/debates</code>
+          <code>GET /api/arena/debates/{id}</code>
+          <code>POST /api/sentinel/engagements</code>
+          <code>POST /api/sentinel/actions/{id}/approve</code>
+          <code>POST /api/sentinel/validate</code>
+          <code>GET /api/sentinel/engagements/{id}/report.md</code>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>
+      <span data-i18n="app.name">Menschheit Arena</span>
+      <span aria-hidden="true">·</span>
+      <span id="footer-version">v0.1.0</span>
+      <span aria-hidden="true">·</span>
+      <span data-i18n="report.disclaimer">Dieser Bericht ist ein Forschungs- und Lernartefakt. Er ist keine Rechts-, Sicherheits- oder Investitionsberatung. KI-Ausgaben können falsch, unvollständig oder manipuliert sein.</span>
+    </p>
+  </footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,1 @@
+"""FastAPI-Oberflaeche und Eingabeschemata."""
