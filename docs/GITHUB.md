@@ -2,29 +2,17 @@
 
 ## Status
 
-Das Projekt ist lokal unter `menschheit-arena/` vollständig angelegt, aber noch kein Git-Repo und nicht auf GitHub. `gh` ist installiert (2.105.0), aber nicht angemeldet:
+Das Projekt ist lokal unter `menschheit-arena/` vollständig angelegt und als Git-Repo mit einem Commit auf `main` vorbereitet. Auf GitHub liegt es noch nicht, weil `gh` nicht angemeldet ist:
 
 ```
 You are not logged into any GitHub hosts.
 ```
 
-## Vorgehen
+Letzter Schritt danach:
 
 ```bash
-cd menschheit-arena
-git init
-git add .
-git commit -m "feat: Menschheit Arena v0.1 (Arena + Sentinel control plane)"
-
-gh auth login          # einmalig, Browser oder Token
+gh auth login
 gh repo create menschheit-arena --public --source=. --push
-```
-
-Oder manuell: Repo auf github.com anlegen, dann
-
-```bash
-git remote add origin git@github.com:<user>/menschheit-arena.git
-git push -u origin main
 ```
 
 ## Vor dem ersten Commit prüfen
