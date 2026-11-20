@@ -2,7 +2,7 @@
 
 **Zwei Säulen, ein lokaler Start:** eine Multi-Agenten-Debatten-Arena (Pro Menschheit gegen Contra Menschheit) und Sentinel Lab, eine Pentest-Control-Plane mit Scope-Enforcement und Human-in-the-Loop.
 
-Die App läuft ohne API-Key im deterministischen Demo-Modus. Erst wenn Modellnamen und ein Key hinterlegt sind, gehen echte LLM-Anfragen raus.
+Die App läuft ohne API-Key im deterministischen Demo-Modus. Erst wenn Modellnamen und ein Key hinterlegt sind, gehen echte LLM-Anfragen raus. Standard ist OpenRouter mit `:free`-Modellen, damit die App ohne Guthaben startet.
 
 ```
 ┌─────────────────────────────┐     ┌──────────────────────────────┐
